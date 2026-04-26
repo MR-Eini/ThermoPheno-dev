@@ -3,7 +3,7 @@ Type: Package
 Title: Thermal-Time-Based Crop Phenology Model
 Version: 0.1.0
 Authors@R: 
-    person("Mohammad Reza Eini", "User", email = "mreiniut@gmail.com", role = c("aut", "cre"))
+    person("Mohammad Reza Eini", email = "mreiniut@gmail.com", role = c("aut", "cre"))
 Description: 
     ThermoPheno is a thermal-time-based phenology model for simulating crop 
     growing seasons under historical and climate change conditions. It includes 
