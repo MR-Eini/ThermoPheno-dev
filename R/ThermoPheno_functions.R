@@ -1,18 +1,27 @@
 library(dplyr)
 library(lubridate)
 
+# Convert date-like inputs safely to Date objects.
 safe_as_date <- function(x) as.Date(x)
 
+# Create a Date from year and MM-DD text (e.g., 2020 + '04-15').
 clamp_year_day <- function(year, mmdd) {
   as.Date(paste0(year, "-", mmdd))
 }
 
+# Standardize and prepare daily weather inputs for simulation.
+# Expected columns: date, tmin, tmax (case-insensitive).
 prepare_weather <- function(df) {
   names(df) <- tolower(names(df))
   required <- c("date", "tmin", "tmax")
   miss <- setdiff(required, names(df))
   if (length(miss) > 0) {
     stop(paste("Missing required weather columns:", paste(miss, collapse = ", ")))
+  }
+
+  validation <- validate_weather_dwd(df, strict = FALSE)
+  if (!validation$ok) {
+    stop(paste(validation$errors, collapse = '\n'))
   }
 
   df %>%
@@ -25,6 +34,7 @@ prepare_weather <- function(df) {
     arrange(date)
 }
 
+# Calculate daily thermal time (degree-days) using one of three methods.
 calc_daily_tt <- function(tmin, tmax, t_base, t_opt = NA, t_max_cut = NA,
                           mode = c("simple", "capped", "triangular")) {
   mode <- match.arg(mode)
@@ -56,6 +66,7 @@ calc_daily_tt <- function(tmin, tmax, t_base, t_opt = NA, t_max_cut = NA,
   tt
 }
 
+# Estimate required thermal time from a baseline period.
 estimate_required_tt <- function(weather,
                                  baseline_years,
                                  planting_mmdd,
@@ -145,6 +156,7 @@ estimate_required_tt <- function(weather,
   )
 }
 
+# Find first valid planting day inside user-defined window.
 find_planting_date <- function(weather_window,
                                earliest_planting_date,
                                latest_planting_date,
@@ -181,6 +193,7 @@ find_planting_date <- function(weather_window,
   list(found = FALSE, planting_date = as.Date(NA))
 }
 
+# Simulate one harvest year and return season-level outcomes.
 simulate_one_year <- function(weather,
                               sim_year,
                               required_tt,
@@ -396,6 +409,7 @@ simulate_one_year <- function(weather,
   )
 }
 
+# Run simulations for all years in prepared weather data.
 run_simulation <- function(weather,
                            crop_name,
                            required_tt,
@@ -525,6 +539,7 @@ run_simulation <- function(weather,
   out
 }
 
+# Provide default parameter presets by crop type.
 default_parameters <- function(crop_type = c("summer", "winter")) {
   crop_type <- match.arg(crop_type)
 

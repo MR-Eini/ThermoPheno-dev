@@ -10,10 +10,14 @@ Description:
     a Shiny application and a set of functions for estimating thermal time, 
     crop maturity, and growing season dynamics.
 License: MIT + file LICENSE
+URL: https://mr-eini.github.io/ThermoPheno-dev/,
+    https://github.com/MR-Eini/ThermoPheno-dev
+BugReports: https://github.com/MR-Eini/ThermoPheno-dev/issues
 Encoding: UTF-8
 LazyData: true
 Imports: 
     shiny,
+    bslib,
     dplyr,
     lubridate,
     ggplot2,
@@ -25,3 +29,8 @@ Imports:
     tibble
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.1
+Suggests:
+    testthat (>= 3.0.0),
+    pkgdown,
+    rdwd
+Config/testthat/edition: 3

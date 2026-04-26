@@ -1,4 +1,6 @@
 ^\.github$
+^_pkgdown\.yml$
 ^pkgdown$
 ^docs$
 ^README\.Rmd$
+^vignettes/dwd-validation\.md$
