@@ -10,6 +10,52 @@ NULL
 .tp_rdwd_data <- function(...) rdwd::dataDWD(...)
 .tp_rdwd_read <- function(...) rdwd::readDWD(...)
 
+.find_dwd_column <- function(x, candidates) {
+  normalized <- tolower(gsub("[^[:alnum:]]+", "_", names(x)))
+  candidates <- tolower(gsub("[^[:alnum:]]+", "_", candidates))
+  hit <- match(candidates, normalized, nomatch = 0)
+  if (!any(hit > 0)) return(NA_character_)
+  names(x)[hit[hit > 0][1]]
+}
+
+.parse_dwd_date <- function(x) {
+  if (inherits(x, "Date")) return(x)
+  if (inherits(x, "POSIXt")) return(as.Date(x))
+
+  chr <- trimws(as.character(x))
+  chr[chr %in% c("", "NA", "-999")] <- NA_character_
+  chr <- sub("\\.0$", "", chr)
+
+  out <- as.Date(chr, format = "%Y%m%d")
+  missing <- is.na(out) & !is.na(chr)
+  if (any(missing)) {
+    out[missing] <- as.Date(chr[missing])
+  }
+  out
+}
+
+.dwd_numeric <- function(x) {
+  out <- suppressWarnings(as.numeric(gsub(",", ".", trimws(as.character(x)))))
+  out[out <= -999] <- NA_real_
+  out
+}
+
+.format_dwd_station_id <- function(x) {
+  chr <- trimws(as.character(x))
+  chr[chr %in% c("", "NA")] <- NA_character_
+  numeric_id <- grepl("^[0-9]+$", chr)
+  chr[numeric_id] <- sprintf("%05d", as.integer(chr[numeric_id]))
+  chr
+}
+
+.filter_optional <- function(df, column, values) {
+  if (is.null(values) || length(values) == 0) return(df)
+  if (!column %in% names(df)) {
+    stop(sprintf("Cannot filter by `%s`; column was not found after DWD standardization.", column), call. = FALSE)
+  }
+  df[df[[column]] %in% values, , drop = FALSE]
+}
+
 assert_rdwd_available <- function() {
   if (!requireNamespace("rdwd", quietly = TRUE)) {
     stop("Package 'rdwd' is required for DWD data access. Install with install.packages('rdwd').", call. = FALSE)
@@ -21,13 +67,66 @@ assert_rdwd_available <- function() {
 #' @return Normalized path to cache directory.
 #' @keywords internal
 prepare_dwd_cache <- function(cache_dir) {
-  if (missing(cache_dir) || !nzchar(cache_dir)) {
+  if (missing(cache_dir) || length(cache_dir) != 1 || !nzchar(cache_dir)) {
     stop("Please provide a non-empty cache_dir.", call. = FALSE)
   }
   if (!dir.exists(cache_dir)) {
     dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
   }
   normalizePath(cache_dir, winslash = "/", mustWork = TRUE)
+}
+
+#' Standardize DWD daily climate columns for ThermoPheno
+#' @param df Raw table returned by `rdwd::readDWD()` for daily `kl` data.
+#' @return `df` with stable `date`, `year`, `station_id`, `tmin`, `tmax`, and
+#'   `tmean` columns when available.
+#' @keywords internal
+standardize_dwd_daily_temperature <- function(df) {
+  date_col <- .find_dwd_column(df, c("MESS_DATUM", "Datum", "date", "DATE"))
+  if (is.na(date_col)) stop("Could not find a date column in DWD temperature data.", call. = FALSE)
+
+  station_col <- .find_dwd_column(df, c("STATIONS_ID", "Stations_id", "station_id", "station"))
+  tmin_col <- .find_dwd_column(df, c("TNK", "tmin", "temp_min", "temperature_min"))
+  tmax_col <- .find_dwd_column(df, c("TXK", "tmax", "temp_max", "temperature_max"))
+  tmean_col <- .find_dwd_column(df, c("TMK", "tmean", "temp_mean", "temperature_mean"))
+
+  if (is.na(tmin_col) || is.na(tmax_col)) {
+    stop("Could not find DWD daily minimum/maximum temperature columns (`TNK`/`TXK`).", call. = FALSE)
+  }
+
+  df$date <- .parse_dwd_date(df[[date_col]])
+  df$year <- as.integer(format(df$date, "%Y"))
+  if (!is.na(station_col)) df$station_id <- .format_dwd_station_id(df[[station_col]])
+  df$tmin <- .dwd_numeric(df[[tmin_col]])
+  df$tmax <- .dwd_numeric(df[[tmax_col]])
+  df$tmean <- if (!is.na(tmean_col)) .dwd_numeric(df[[tmean_col]]) else (df$tmin + df$tmax) / 2
+  df
+}
+
+#' Standardize DWD crop phenology columns for validation joins
+#' @param df Raw phenology table returned by `rdwd::readDWD()`.
+#' @param source_file Optional source filename used for traceability.
+#' @return `df` with stable `station_id`, `year`, `crop_id`, `phenophase_id`,
+#'   `observed_date`, and `observed_doy` columns when available.
+#' @keywords internal
+standardize_dwd_crop_phenology <- function(df, source_file = NA_character_) {
+  if (nrow(df) == 0) return(df)
+
+  station_col <- .find_dwd_column(df, c("Stations_id", "STATIONS_ID", "station_id", "station"))
+  year_col <- .find_dwd_column(df, c("Referenzjahr", "Jahr", "year", "YEAR", "JAHR"))
+  crop_col <- .find_dwd_column(df, c("Objekt_id", "object_id", "crop_id"))
+  phase_col <- .find_dwd_column(df, c("Phase_id", "phenophase_id", "phase_id", "phase"))
+  date_col <- .find_dwd_column(df, c("Eintrittsdatum", "entry_date", "observed_date", "date"))
+  doy_col <- .find_dwd_column(df, c("Jultag", "doy", "day_of_year"))
+
+  if (!is.na(station_col)) df$station_id <- .format_dwd_station_id(df[[station_col]])
+  if (!is.na(year_col)) df$year <- as.integer(.dwd_numeric(df[[year_col]]))
+  if (!is.na(crop_col)) df$crop_id <- as.integer(.dwd_numeric(df[[crop_col]]))
+  if (!is.na(phase_col)) df$phenophase_id <- as.integer(.dwd_numeric(df[[phase_col]]))
+  if (!is.na(date_col)) df$observed_date <- .parse_dwd_date(df[[date_col]])
+  if (!is.na(doy_col)) df$observed_doy <- as.integer(.dwd_numeric(df[[doy_col]]))
+  df$source_file <- basename(source_file)
+  df
 }
 
 #' Download DWD daily temperature data for one station
@@ -65,16 +164,16 @@ get_dwd_daily_temperature <- function(station_id,
     stop("No DWD temperature files were downloaded.", call. = FALSE)
   }
 
-  tables <- lapply(files, .tp_rdwd_read)
-  out <- dplyr::bind_rows(tables)
+  read_args <- list(file = files)
+  if (length(files) > 1) read_args$hr <- 4
+  out <- do.call(.tp_rdwd_read, read_args)
+  if (is.list(out) && !is.data.frame(out)) out <- dplyr::bind_rows(out)
+  out <- standardize_dwd_daily_temperature(out)
 
-  date_col <- intersect(c("MESS_DATUM", "Datum", "date", "DATE"), names(out))
-  if (length(date_col) == 0) stop("Could not find a date column in DWD temperature data.", call. = FALSE)
-
-  out$date <- as.Date(as.character(out[[date_col[1]]]), format = "%Y%m%d")
-  out$year <- as.integer(format(out$date, "%Y"))
-
-  out <- dplyr::filter(out, !is.na(date), year >= start_year, year <= end_year)
+  out <- out[!is.na(out$date) & out$year >= start_year & out$year <= end_year, , drop = FALSE]
+  if ("station_id" %in% names(out)) {
+    out <- out[out$station_id == .format_dwd_station_id(station_id), , drop = FALSE]
+  }
   out
 }
 
@@ -89,6 +188,9 @@ get_dwd_daily_temperature <- function(station_id,
 #' @param cache_dir User cache path (outside package repository).
 #' @param reporter_type Either `"annual_reporters"` or `"immediate_reporters"`.
 #' @param period DWD period selection (`"historical"` or `"recent"`).
+#' @param station_id Optional DWD phenology station ID(s) to retain.
+#' @param phase_id Optional DWD phenological phase ID(s) to retain.
+#' @param object_id Optional DWD crop/object ID(s) to retain.
 #' @return Data frame of phenology observations (best-effort standardization).
 #' @keywords internal
 get_dwd_crop_phenology <- function(crop_pattern,
@@ -96,7 +198,10 @@ get_dwd_crop_phenology <- function(crop_pattern,
                                    end_year,
                                    cache_dir,
                                    reporter_type = c("annual_reporters", "immediate_reporters"),
-                                   period = c("historical", "recent")) {
+                                   period = c("historical", "recent"),
+                                   station_id = NULL,
+                                   phase_id = NULL,
+                                   object_id = NULL) {
   assert_rdwd_available()
   cache_dir <- prepare_dwd_cache(cache_dir)
   reporter_type <- match.arg(reporter_type)
@@ -127,20 +232,22 @@ get_dwd_crop_phenology <- function(crop_pattern,
       first_txt <- txt$Name[grepl("\\.txt$", txt$Name, ignore.case = TRUE)][1]
       if (is.na(first_txt)) return(data.frame())
       extracted <- utils::unzip(f, files = first_txt, exdir = cache_dir, overwrite = FALSE)
-      return(readr::read_delim(extracted, delim = ";", show_col_types = FALSE))
+      out <- readr::read_delim(extracted, delim = ";", show_col_types = FALSE)
     }
-    out
+    standardize_dwd_crop_phenology(out, source_file = f)
   })
 
   out <- dplyr::bind_rows(tables)
 
   if (nrow(out) == 0) return(out)
 
-  year_col <- intersect(c("Jahr", "year", "YEAR", "JAHR"), names(out))
-  if (length(year_col) > 0) {
-    out$year <- as.integer(out[[year_col[1]]])
-    out <- dplyr::filter(out, !is.na(year), year >= start_year, year <= end_year)
+  if (!"year" %in% names(out)) {
+    stop("Could not find a reference year column in DWD phenology data.", call. = FALSE)
   }
+  out <- out[!is.na(out$year) & out$year >= start_year & out$year <= end_year, , drop = FALSE]
+  out <- .filter_optional(out, "station_id", .format_dwd_station_id(station_id))
+  out <- .filter_optional(out, "phenophase_id", as.integer(phase_id))
+  out <- .filter_optional(out, "crop_id", as.integer(object_id))
 
   out
 }
@@ -159,10 +266,16 @@ build_dwd_validation_table <- function(observed,
                                        by = c("year"),
                                        observed_date_col,
                                        simulated_date_col) {
+  if (!observed_date_col %in% names(observed)) {
+    stop(sprintf("Column `%s` was not found in observed data.", observed_date_col), call. = FALSE)
+  }
+  if (!simulated_date_col %in% names(simulated)) {
+    stop(sprintf("Column `%s` was not found in simulated data.", simulated_date_col), call. = FALSE)
+  }
   joined <- dplyr::inner_join(observed, simulated, by = by, suffix = c("_obs", "_sim"))
 
-  obs <- as.Date(joined[[observed_date_col]])
-  sim <- as.Date(joined[[simulated_date_col]])
+  obs <- .parse_dwd_date(joined[[observed_date_col]])
+  sim <- .parse_dwd_date(joined[[simulated_date_col]])
   err <- as.numeric(sim - obs)
 
   out_table <- dplyr::mutate(

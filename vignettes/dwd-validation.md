@@ -38,7 +38,7 @@ val <- ThermoPheno:::build_dwd_validation_table(
   observed = pheno,
   simulated = sim,
   by = "year",
-  observed_date_col = "obs_date",
+  observed_date_col = "observed_date",
   simulated_date_col = "maturity_date"
 )
 
