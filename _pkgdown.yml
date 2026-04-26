@@ -33,3 +33,8 @@ reference:
   - title: Validation helpers
     contents:
       - matches("validate_weather_dwd")
+
+
+  - title: DWD access helpers
+    contents:
+      - matches("prepare_dwd_cache|get_dwd_daily_temperature|get_dwd_crop_phenology|build_dwd_validation_table|example_dwd_workflow")

@@ -5,3 +5,7 @@
 .Ruserdata
 /docs/
 /pkgdown/
+
+# Local DWD cache (never commit)
+dwd_cache/
+*.dwdcache

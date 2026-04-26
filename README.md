@@ -77,3 +77,45 @@ devtools::test()
 ## License
 
 MIT (see `LICENSE`).
+
+## DWD Open Data integration (rdwd)
+
+ThermoPheno includes helper functions for pulling DWD data via `rdwd` with a **user-managed cache directory**.
+
+```r
+# install.packages("rdwd")
+cache_dir <- "~/thermopheno_dwd_cache"   # outside repository
+
+# Daily station temperature (DWD climate daily 'kl')
+temp <- ThermoPheno:::get_dwd_daily_temperature(
+  station_id = "00386",
+  start_year = 2018,
+  end_year = 2020,
+  cache_dir = cache_dir,
+  period = "historical"
+)
+
+# Crop phenology observations (DWD phenology open data)
+pheno <- ThermoPheno:::get_dwd_crop_phenology(
+  crop_pattern = "hafer|oat",
+  start_year = 2018,
+  end_year = 2020,
+  cache_dir = cache_dir,
+  reporter_type = "annual_reporters",
+  period = "historical"
+)
+```
+
+### Validation output table
+
+Use `build_dwd_validation_table()` after joining observed and simulated records by keys such as year/station/phase. The output contains:
+
+- `observed_date`
+- `simulated_date`
+- `error_days` (= simulated - observed)
+- summary metrics: `MAE_days`, `RMSE_days`, `bias_days`, and `R2` (when enough variation exists)
+
+### Important
+
+- Keep DWD cache outside this repository.
+- Never commit downloaded DWD data to GitHub.
