@@ -2,22 +2,23 @@ name: R-CMD-check
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, codex/completion]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
-    name: ${{ matrix.config.os }} (${{ matrix.config.r })
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
 
     strategy:
       fail-fast: false
       matrix:
         config:
           - {os: ubuntu-latest, r: 'release'}
+          - {os: ubuntu-latest, r: 'devel'}
           - {os: windows-latest, r: 'release'}
-          - {os: macos-latest, r: 'release'}
 
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +32,13 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck
+          extra-packages: |
+            any::rcmdcheck
+            any::testthat
+          needs: check
+
+      - name: Run testthat
+        run: testthat::test_dir("tests/testthat")
+        shell: Rscript {0}
 
       - uses: r-lib/actions/check-r-package@v2

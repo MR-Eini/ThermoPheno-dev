@@ -5,20 +5,31 @@ template:
     primary: "#146C94"
     secondary: "#F6F1F1"
 
+home:
+  title: ThermoPheno
+  description: Thermal-time crop phenology simulation package with Shiny app support.
+  strip_header: false
+
+url: https://mr-eini.github.io/ThermoPheno-dev/
+
 navbar:
   structure:
-    left: [home, reference, articles, news]
+    left: [home, reference, news]
     right: [github]
   components:
     github:
       icon: fab fa-github
-      href: https://github.com/MR-Eini/ThermoPheno
-
-home:
-  title: ThermoPheno
-  description: Thermal-time crop phenology simulation with a Shiny app.
+      href: https://github.com/MR-Eini/ThermoPheno-dev
 
 reference:
-  - title: Launch app
+  - title: User-facing functions
     contents:
       - ThermoPheno
+
+  - title: Core model internals
+    contents:
+      - matches("prepare_weather|calc_daily_tt|estimate_required_tt|run_simulation|simulate_one_year|default_parameters")
+
+  - title: Validation helpers
+    contents:
+      - matches("validate_weather_dwd")

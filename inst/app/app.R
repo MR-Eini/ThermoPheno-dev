@@ -12,6 +12,32 @@ invisible(lapply(packages, library, character.only = TRUE))
 
 safe_as_date <- function(x) as.Date(x)
 
+validate_weather_dwd <- function(df, strict = FALSE) {
+  errors <- character()
+  warnings <- character()
+
+  names(df) <- tolower(names(df))
+  required <- c("date", "tmin", "tmax")
+  miss <- setdiff(required, names(df))
+  if (length(miss) > 0) errors <- c(errors, paste("Missing required weather columns:", paste(miss, collapse = ", ")))
+
+  if (length(errors) == 0) {
+    d <- as.Date(df$date)
+    if (any(is.na(d))) errors <- c(errors, "Unparseable values found in `date` column.")
+    if (!is.numeric(df$tmin) || !is.numeric(df$tmax)) errors <- c(errors, "`tmin` and `tmax` must be numeric.")
+    if (is.numeric(df$tmin) && is.numeric(df$tmax) && any(df$tmin > df$tmax, na.rm = TRUE)) {
+      errors <- c(errors, "At least one row has tmin > tmax.")
+    }
+    if (any(df$tmin < -60, na.rm = TRUE) || any(df$tmax > 60, na.rm = TRUE)) {
+      warnings <- c(warnings, "Potentially unrealistic temperature values detected.")
+    }
+  }
+
+  ok <- length(errors) == 0
+  if (strict && !ok) stop(paste(errors, collapse = "\n"), call. = FALSE)
+  list(ok = ok, errors = errors, warnings = warnings)
+}
+
 options(shiny.maxRequestSize = 200 * 1024^2)
 
 clamp_year_day <- function(year, mmdd) {
@@ -23,6 +49,9 @@ prepare_weather <- function(df) {
   required <- c("date", "tmin", "tmax")
   miss <- setdiff(required, names(df))
   if (length(miss) > 0) stop(paste("Missing required weather columns:", paste(miss, collapse = ", ")))
+  validation <- validate_weather_dwd(df, strict = FALSE)
+  if (!validation$ok) stop(paste(validation$errors, collapse = "\n"))
+
   df %>%
     mutate(
       date = safe_as_date(date),
@@ -459,12 +488,20 @@ server <- function(input, output, session) {
   
   weather_data <- reactive({
     req(input$weather_file)
-    prepare_weather(read_csv(input$weather_file$datapath, show_col_types = FALSE))
+    raw <- read_csv(input$weather_file$datapath, show_col_types = FALSE)
+    checks <- validate_weather_dwd(raw, strict = FALSE)
+    if (length(checks$warnings) > 0) showNotification(paste(checks$warnings, collapse = "\n"), type = "warning", duration = 8)
+    prepare_weather(raw)
   })
   
   climate_data_combined <- reactive({
     res <- list()
-    if (isTruthy(input$climate_file)) res[[1]] <- prepare_weather(read_csv(input$climate_file$datapath, show_col_types = FALSE))
+    if (isTruthy(input$climate_file)) {
+      raw_climate <- read_csv(input$climate_file$datapath, show_col_types = FALSE)
+      checks <- validate_weather_dwd(raw_climate, strict = FALSE)
+      if (length(checks$warnings) > 0) showNotification(paste(checks$warnings, collapse = "\n"), type = "warning", duration = 8)
+      res[[1]] <- prepare_weather(raw_climate)
+    }
     if (isTruthy(input$use_synthetic_cc) && isTruthy(input$weather_file)) {
       syn <- weather_data()
       syn$tmin <- syn$tmin + input$synthetic_temp_delta
