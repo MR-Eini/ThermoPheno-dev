@@ -1,6 +1,8 @@
-# ThermoPheno <img src="man/figures/logo.png" align="right" height="110" alt="ThermoPheno logo" />
+﻿# ThermoPheno <img src="man/figures/logo.png" align="right" height="110" alt="ThermoPheno logo" />
 
 ThermoPheno is an R package and Shiny application for simulating crop phenology using thermal-time (GDD) rules under historical and climate-scenario temperature series.
+
+Website: <https://mr-eini.github.io/ThermoPheno-dev/>
 
 ## What ThermoPheno does
 
@@ -13,19 +15,19 @@ ThermoPheno is an R package and Shiny application for simulating crop phenology 
 
 ```text
 ThermoPheno-dev/
-├── R/                        # Core package functions
-│   ├── ThermoPheno_functions.R
-│   ├── dwd_validation.R      # Input validation module
-│   ├── app_launcher.R
-│   └── zzz.R
-├── inst/
-│   ├── app/                  # Shiny application
-│   │   └── app.R
-│   └── extdata/              # Example data
-├── tests/testthat/           # Unit tests
-├── man/                      # Rd docs
-├── .github/workflows/        # CI and docs pipelines
-└── _pkgdown.yml              # pkgdown site config
+|-- R/                        # Core package functions
+|   |-- ThermoPheno_functions.R
+|   |-- dwd_validation.R      # Input validation module
+|   |-- app_launcher.R
+|   `-- zzz.R
+|-- inst/
+|   |-- app/                  # Shiny application
+|   |   `-- app.R
+|   `-- extdata/              # Example data
+|-- tests/testthat/           # Unit tests
+|-- man/                      # Rd docs
+|-- .github/workflows/        # CI and docs pipelines
+`-- _pkgdown.yml              # pkgdown site config
 ```
 
 ## Installation
@@ -55,8 +57,8 @@ At minimum, CSV files must include:
 | column | type | example |
 |---|---|---|
 | `date` | Date (`YYYY-MM-DD`) | `1991-04-15` |
-| `tmin` | numeric °C | `4.2` |
-| `tmax` | numeric °C | `13.7` |
+| `tmin` | numeric C | `4.2` |
+| `tmax` | numeric C | `13.7` |
 
 Optional grouping columns in climate files: `scenario`, `model`, `period`, `station`.
 
@@ -66,6 +68,20 @@ Optional grouping columns in climate files: `scenario`, `model`, `period`, `stat
 install.packages(c("devtools", "testthat", "pkgdown"))
 devtools::load_all()
 devtools::test()
+```
+
+## Website deployment
+
+The pkgdown website is configured in `_pkgdown.yml` and is published to:
+
+<https://mr-eini.github.io/ThermoPheno-dev/>
+
+Deployment runs through `.github/workflows/pkgdown.yaml` on pushes to `main` or `master`, and can also be started manually with `workflow_dispatch`. The workflow builds the site with `pkgdown::build_site_github_pages()` and deploys the generated `docs/` directory to the `gh-pages` branch.
+
+To preview the site locally:
+
+```r
+pkgdown::build_site()
 ```
 
 ## Notes

@@ -19,6 +19,7 @@ navbar:
   components:
     github:
       icon: fab fa-github
+      aria-label: GitHub repository
       href: https://github.com/MR-Eini/ThermoPheno-dev
 
 reference:

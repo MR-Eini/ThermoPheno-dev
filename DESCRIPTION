@@ -10,6 +10,9 @@ Description:
     a Shiny application and a set of functions for estimating thermal time, 
     crop maturity, and growing season dynamics.
 License: MIT + file LICENSE
+URL: https://mr-eini.github.io/ThermoPheno-dev/,
+    https://github.com/MR-Eini/ThermoPheno-dev
+BugReports: https://github.com/MR-Eini/ThermoPheno-dev/issues
 Encoding: UTF-8
 LazyData: true
 Imports: 
