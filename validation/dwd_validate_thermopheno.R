@@ -16,6 +16,20 @@ suppressPackageStartupMessages({
 
 options(stringsAsFactors = FALSE)
 
+# Prefer local package source files when the script is run from the repository root.
+# This lets the validation use newly added functions before the package is reinstalled.
+if (file.exists("R/ThermoPheno_functions.R")) {
+  source("R/ThermoPheno_functions.R", local = globalenv(), encoding = "UTF-8")
+}
+
+# Thermal-time calibration mode.
+# TRUE: estimate required_tt from observed DWD planting-to-harvest calendars during 1991-2010.
+# FALSE: use the reference-date/days-to-maturity method.
+USE_OBSERVED_TT_CALIBRATION <- TRUE
+OBSERVED_TT_SUMMARY_FUN <- "median"
+MIN_OBSERVED_TT_YEARS <- 3
+MIN_WEATHER_COVERAGE <- 0.95
+
 PHENO_HIST_URL   <- "https://opendata.dwd.de/climate_environment/CDC/observations_germany/phenology/annual_reporters/crops/historical/"
 PHENO_RECENT_URL <- "https://opendata.dwd.de/climate_environment/CDC/observations_germany/phenology/annual_reporters/crops/recent/"
 PHENO_HELP_URL   <- "https://opendata.dwd.de/climate_environment/CDC/help/"
@@ -177,7 +191,11 @@ read_climate_station <- function(station_row) {
     station_id = station_row$station_id
   )
   out <- out %>% filter(!is.na(date), is.finite(tmin), is.finite(tmax), tmin > -80, tmax < 80)
-  ThermoPheno::prepare_weather(out)
+  if (exists("prepare_weather", mode = "function", inherits = TRUE)) {
+    prepare_weather(out)
+  } else {
+    ThermoPheno::prepare_weather(out)
+  }
 }
 
 message("Downloading DWD phenology station metadata...")
@@ -295,6 +313,7 @@ join_phase_names <- function(pheno, phase_def) {
 all_pairs <- list()
 all_phase_candidates <- list()
 all_matches <- list()
+all_required_tt <- list()
 
 for (ii in seq_len(nrow(cfg))) {
   cc <- cfg[ii, ]
@@ -432,25 +451,99 @@ for (ii in seq_len(nrow(cfg))) {
     calib_years <- 1991:2010
     valid_years <- 2011:2024
 
-    req <- tryCatch(
-      ThermoPheno::estimate_required_tt(
-        weather = weather,
-        baseline_years = calib_years,
-        planting_mmdd = cc$baseline_planting_mmdd,
-        days_to_maturity = cc$days_to_maturity,
-        t_base = cc$t_base,
-        t_opt = cc$t_opt,
-        t_max_cut = cc$t_max_cut,
-        tt_mode = "triangular",
-        crop_type = cc$crop_type,
-        vernalization_required = isTRUE(cc$vernalization_required),
-        vernalization_days_required = cc$vernalization_days_required
-      ), error = function(e) {
-        warning("TT calibration failed for ", cc$crop_name, " / ", site$station_id_pheno, ": ", conditionMessage(e))
-        NULL
-      }
+    obs_calib <- obs_site %>%
+      filter(crop_year %in% calib_years) %>%
+      transmute(
+        crop_year,
+        observed_planting_date,
+        observed_harvest_date
+      ) %>%
+      filter(
+        !is.na(observed_planting_date),
+        !is.na(observed_harvest_date),
+        observed_harvest_date >= observed_planting_date
+      )
+
+    observed_tt_fun_available <- exists(
+      "estimate_required_tt_from_observed",
+      mode = "function",
+      inherits = TRUE
     )
+
+    req <- NULL
+
+    if (isTRUE(USE_OBSERVED_TT_CALIBRATION) &&
+        observed_tt_fun_available &&
+        nrow(obs_calib) >= MIN_OBSERVED_TT_YEARS) {
+
+      req <- tryCatch(
+        estimate_required_tt_from_observed(
+          weather = weather,
+          observed_calendar = obs_calib,
+          calibration_years = calib_years,
+          planting_col = "observed_planting_date",
+          harvest_col = "observed_harvest_date",
+          year_col = "crop_year",
+          t_base = cc$t_base,
+          t_opt = cc$t_opt,
+          t_max_cut = cc$t_max_cut,
+          tt_mode = cc$tt_mode,
+          summary_fun = OBSERVED_TT_SUMMARY_FUN,
+          min_weather_coverage = MIN_WEATHER_COVERAGE
+        ),
+        error = function(e) {
+          warning(
+            "Observed TT calibration failed for ", cc$crop_name,
+            " / ", site$station_id_pheno,
+            ": ", conditionMessage(e),
+            ". Falling back to reference-date calibration."
+          )
+          NULL
+        }
+      )
+    }
+
+    if (is.null(req)) {
+      req <- tryCatch(
+        ThermoPheno::estimate_required_tt(
+          weather = weather,
+          baseline_years = calib_years,
+          planting_mmdd = cc$baseline_planting_mmdd,
+          days_to_maturity = cc$days_to_maturity,
+          t_base = cc$t_base,
+          t_opt = cc$t_opt,
+          t_max_cut = cc$t_max_cut,
+          tt_mode = cc$tt_mode,
+          crop_type = cc$crop_type,
+          winter_dormancy_temp = cc$winter_dormancy_temp,
+          vernalization_required = isTRUE(cc$vernalization_required),
+          vernalization_days_required = cc$vernalization_days_required,
+          spring_regrowth_temp = cc$spring_regrowth_temp
+        ),
+        error = function(e) {
+          warning("TT calibration failed for ", cc$crop_name, " / ", site$station_id_pheno, ": ", conditionMessage(e))
+          NULL
+        }
+      )
+    }
+
     if (is.null(req)) next
+
+    req_method <- if ("calibration_method" %in% names(req)) req$calibration_method else "reference_days"
+    req_n_valid <- if ("n_valid_years" %in% names(req)) req$n_valid_years else NA_integer_
+
+    if ("yearly_required_tt" %in% names(req) && is.data.frame(req$yearly_required_tt)) {
+      all_required_tt[[paste(cc$crop_name, site$station_id_pheno, sep = "_")]] <-
+        req$yearly_required_tt %>%
+        mutate(
+          crop_name = cc$crop_name,
+          station_id_pheno = site$station_id_pheno,
+          climate_station_id = nearest$station_id,
+          tt_calibration_method = req_method,
+          required_tt_final = req$required_tt,
+          n_valid_tt_years = req_n_valid
+        )
+    }
 
     sim <- tryCatch(
       ThermoPheno::run_simulation(
@@ -463,13 +556,15 @@ for (ii in seq_len(nrow(cfg))) {
         t_base = cc$t_base,
         t_opt = cc$t_opt,
         t_max_cut = cc$t_max_cut,
-        tt_mode = "triangular",
+        tt_mode = cc$tt_mode,
         crop_type = cc$crop_type,
         min_mean_temp_plant = cc$min_mean_temp_plant,
-        forced_harvest_allowed = TRUE,
-        min_fraction_tt_for_forced_harvest = 0.8,
+        forced_harvest_allowed = isTRUE(cc$forced_harvest_allowed),
+        min_fraction_tt_for_forced_harvest = cc$min_fraction_tt_for_forced_harvest,
+        winter_dormancy_temp = cc$winter_dormancy_temp,
         vernalization_required = isTRUE(cc$vernalization_required),
         vernalization_days_required = cc$vernalization_days_required,
+        spring_regrowth_temp = cc$spring_regrowth_temp,
         winter_plant_temp_min = cc$winter_plant_temp_min,
         winter_plant_temp_max = cc$winter_plant_temp_max
       ), error = function(e) {
@@ -497,7 +592,9 @@ for (ii in seq_len(nrow(cfg))) {
         simulated_harvest_date = harvest_date,
         harvest_error_days = as.numeric(simulated_harvest_date - observed_harvest_date),
         status,
-        required_tt = req$required_tt
+        required_tt = req$required_tt,
+        tt_calibration_method = req_method,
+        n_valid_tt_years = req_n_valid
       )
 
     all_pairs[[paste(cc$crop_name, site$station_id_pheno, sep = "_")]] <- pairs
@@ -512,6 +609,9 @@ readr::write_csv(matches, file.path(res_dir, "nearest_climate_station_matches.cs
 
 pairs <- if (length(all_pairs)) bind_rows(all_pairs) else data.frame()
 readr::write_csv(pairs, file.path(res_dir, "validation_pairs.csv"))
+
+required_tt_table <- if (length(all_required_tt)) bind_rows(all_required_tt) else data.frame()
+readr::write_csv(required_tt_table, file.path(res_dir, "required_tt_calibration_by_station.csv"))
 
 if (nrow(pairs) == 0) {
   writeLines(c(
@@ -600,6 +700,9 @@ summary_lines <- c(
   paste("Validation pairs:", nrow(pairs)),
   paste("Phenology stations:", dplyr::n_distinct(pairs$station_id_pheno)),
   paste("Climate stations:", dplyr::n_distinct(pairs$climate_station_id)),
+  paste("Observed TT calibration enabled:", USE_OBSERVED_TT_CALIBRATION),
+  paste("Minimum observed TT calibration years:", MIN_OBSERVED_TT_YEARS),
+  paste("Minimum weather coverage for observed TT:", MIN_WEATHER_COVERAGE),
   "",
   capture.output(print(metrics))
 )

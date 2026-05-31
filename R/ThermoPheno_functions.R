@@ -558,3 +558,147 @@ compare_validation_metrics <- function(df, observed_col = "observed_date", simul
     r2 = r2
   )
 }
+
+#' Estimate required thermal time from observed planting and harvest dates
+#'
+#' @param weather Prepared weather data from prepare_weather().
+#' @param observed_calendar Data frame with observed planting and harvest dates.
+#' @param calibration_years Years used for thermal-time calibration.
+#' @param planting_col Name of observed planting-date column.
+#' @param harvest_col Name of observed harvest-date column.
+#' @param year_col Name of crop-year column.
+#' @param t_base Base temperature.
+#' @param t_opt Optimum temperature.
+#' @param t_max_cut Upper temperature cutoff.
+#' @param tt_mode Thermal-time method: simple, capped, or triangular.
+#' @param summary_fun Summary method for annual TT values: median or mean.
+#' @param min_weather_coverage Minimum fraction of daily weather records required.
+#'
+#' @return A list containing yearly observed TT values and the estimated required TT.
+#' @export
+estimate_required_tt_from_observed <- function(
+    weather,
+    observed_calendar,
+    calibration_years,
+    planting_col = "observed_planting_date",
+    harvest_col = "observed_harvest_date",
+    year_col = "crop_year",
+    t_base,
+    t_opt = NA_real_,
+    t_max_cut = NA_real_,
+    tt_mode = "simple",
+    summary_fun = c("median", "mean"),
+    min_weather_coverage = 0.95
+) {
+  summary_fun <- match.arg(summary_fun)
+
+  if (!is.data.frame(weather)) {
+    stop("`weather` must be a data frame.", call. = FALSE)
+  }
+
+  if (!is.data.frame(observed_calendar)) {
+    stop("`observed_calendar` must be a data frame.", call. = FALSE)
+  }
+
+  if (!all(c("date", "tmin", "tmax") %in% names(weather))) {
+    stop("weather must contain `date`, `tmin`, and `tmax` columns.", call. = FALSE)
+  }
+
+  if (!inherits(weather$date, "Date") || !"tmean" %in% names(weather)) {
+    weather <- prepare_weather(weather)
+  }
+
+  required_cols <- c(planting_col, harvest_col, year_col)
+  missing_cols <- setdiff(required_cols, names(observed_calendar))
+
+  if (length(missing_cols) > 0) {
+    stop(
+      "observed_calendar is missing required columns: ",
+      paste(missing_cols, collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  obs <- observed_calendar |>
+    dplyr::mutate(
+      observed_planting_tmp = as.Date(.data[[planting_col]]),
+      observed_harvest_tmp  = as.Date(.data[[harvest_col]]),
+      crop_year_tmp         = as.integer(.data[[year_col]])
+    ) |>
+    dplyr::filter(
+      crop_year_tmp %in% calibration_years,
+      !is.na(observed_planting_tmp),
+      !is.na(observed_harvest_tmp),
+      observed_harvest_tmp >= observed_planting_tmp
+    )
+
+  if (nrow(obs) == 0) {
+    stop("No valid observed planting-harvest pairs in calibration years.", call. = FALSE)
+  }
+
+  yearly_tt <- lapply(seq_len(nrow(obs)), function(i) {
+    plant_date <- obs$observed_planting_tmp[i]
+    harvest_date <- obs$observed_harvest_tmp[i]
+
+    sub <- weather |>
+      dplyr::filter(date >= plant_date, date <= harvest_date) |>
+      dplyr::arrange(date)
+
+    expected_days <- as.integer(harvest_date - plant_date) + 1
+    coverage <- if (expected_days > 0) nrow(sub) / expected_days else 0
+
+    if (nrow(sub) == 0 || coverage < min_weather_coverage) {
+      return(data.frame(
+        crop_year = obs$crop_year_tmp[i],
+        observed_planting_date = plant_date,
+        observed_harvest_date = harvest_date,
+        expected_days = expected_days,
+        available_weather_days = nrow(sub),
+        weather_coverage = coverage,
+        observed_required_tt = NA_real_
+      ))
+    }
+
+    tt <- calc_daily_tt(
+      tmin = sub$tmin,
+      tmax = sub$tmax,
+      t_base = t_base,
+      t_opt = t_opt,
+      t_max_cut = t_max_cut,
+      mode = tt_mode
+    )
+
+    data.frame(
+      crop_year = obs$crop_year_tmp[i],
+      observed_planting_date = plant_date,
+      observed_harvest_date = harvest_date,
+      expected_days = expected_days,
+      available_weather_days = nrow(sub),
+      weather_coverage = coverage,
+      observed_required_tt = sum(tt, na.rm = TRUE)
+    )
+  }) |>
+    dplyr::bind_rows()
+
+  valid_tt <- yearly_tt |>
+    dplyr::filter(is.finite(observed_required_tt))
+
+  if (nrow(valid_tt) == 0) {
+    stop("Could not estimate observed thermal-time requirement.", call. = FALSE)
+  }
+
+  required_tt <- if (summary_fun == "median") {
+    stats::median(valid_tt$observed_required_tt, na.rm = TRUE)
+  } else {
+    mean(valid_tt$observed_required_tt, na.rm = TRUE)
+  }
+
+  list(
+    yearly_required_tt = yearly_tt,
+    required_tt = required_tt,
+    calibration_method = "observed_calendar",
+    summary_fun = summary_fun,
+    min_weather_coverage = min_weather_coverage,
+    n_valid_years = nrow(valid_tt)
+  )
+}
