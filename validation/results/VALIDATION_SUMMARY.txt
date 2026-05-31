@@ -1,1 +1,0 @@
-No validation pairs were created. Inspect phase_candidates.csv and adjust validation/crop_config.csv.

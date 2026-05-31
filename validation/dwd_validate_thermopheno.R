@@ -273,7 +273,12 @@ join_phase_names <- function(pheno, phase_def) {
       pd$object_id_tmp <- if (!is.na(pd_obj)) as.character(pd[[pd_obj]]) else NA_character_
       text_cols <- names(pd)[sapply(pd, function(z) is.character(z) || is.factor(z))]
       pd$phase_text_joined <- apply(pd[, text_cols, drop = FALSE], 1, function(z) paste(z, collapse = " | "))
-      pd <- pd %>% distinct(object_id_tmp, phase_id_tmp, phase_text_joined)
+      # The DWD phase definition table may contain duplicate rows for the same
+      # crop object and phase. Keep one definition per object-phase pair to avoid
+      # duplicating phenology observations during the join.
+      pd <- pd %>%
+        group_by(object_id_tmp, phase_id_tmp) %>%
+        summarise(phase_text_joined = dplyr::first(phase_text_joined), .groups = "drop")
       if (!all(is.na(out$object_id_tmp)) && !all(is.na(pd$object_id_tmp))) {
         out <- out %>% left_join(pd, by = c("object_id_tmp", "phase_id_tmp"))
       } else {
@@ -337,17 +342,51 @@ for (ii in seq_len(nrow(cfg))) {
     next
   }
 
+  # crop_year must be created with vectorized logic inside mutate().
+  # For winter crops, autumn sowing belongs to the following harvest year.
+  is_winter_crop <- identical(as.character(cc$crop_type[[1]]), "winter")
   planting_obs <- planting_obs %>% mutate(
-    crop_year = if (cc$crop_type == "winter" & lubridate::month(date_obs) >= 8) lubridate::year(date_obs) + 1L else lubridate::year(date_obs)
+    crop_year = dplyr::if_else(
+      .env$is_winter_crop & lubridate::month(date_obs) >= 8L,
+      lubridate::year(date_obs) + 1L,
+      lubridate::year(date_obs)
+    )
   )
   harvest_obs <- harvest_obs %>% mutate(crop_year = lubridate::year(date_obs))
 
+  # Reduce observations to one planting and one harvest date per station-year.
+  # DWD annual-reporter crop files can contain multiple observations for the same
+  # station-year/phase, and duplicate phase-definition rows can also duplicate rows.
+  # A station-year median is used as a robust representative date for validation.
+  median_date <- function(x) {
+    x <- as.Date(x)
+    x <- x[!is.na(x)]
+    if (length(x) == 0) return(as.Date(NA))
+    as.Date(stats::median(as.numeric(x)), origin = "1970-01-01")
+  }
+
+  planting_year <- planting_obs %>%
+    group_by(station_id_pheno, crop_year) %>%
+    summarise(
+      observed_planting_date = median_date(date_obs),
+      n_planting_records = dplyr::n(),
+      .groups = "drop"
+    )
+
+  harvest_year <- harvest_obs %>%
+    group_by(station_id_pheno, crop_year) %>%
+    summarise(
+      observed_harvest_date = median_date(date_obs),
+      n_harvest_records = dplyr::n(),
+      .groups = "drop"
+    )
+
   obs <- inner_join(
-    planting_obs %>% transmute(station_id_pheno, crop_year, observed_planting_date = date_obs),
-    harvest_obs  %>% transmute(station_id_pheno, crop_year, observed_harvest_date  = date_obs),
-    by = c("station_id_pheno", "crop_year")
+    planting_year,
+    harvest_year,
+    by = c("station_id_pheno", "crop_year"),
+    relationship = "one-to-one"
   ) %>%
-    distinct() %>%
     filter(crop_year >= 1991, crop_year <= 2024) %>%
     inner_join(pheno_sites_all, by = "station_id_pheno")
 
@@ -484,11 +523,23 @@ if (nrow(pairs) == 0) {
 }
 
 metric_one <- function(df, phase) {
-  e <- if (phase == "planting") df$planting_error_days else df$harvest_error_days
-  e <- e[is.finite(e)]
+  if (phase == "planting") {
+    e <- df$planting_error_days
+    obs <- lubridate::yday(df$observed_planting_date)
+    sim <- lubridate::yday(df$simulated_planting_date)
+  } else {
+    e <- df$harvest_error_days
+    obs <- lubridate::yday(df$observed_harvest_date)
+    sim <- lubridate::yday(df$simulated_harvest_date)
+  }
+  ok <- is.finite(e) & is.finite(obs) & is.finite(sim)
+  e <- e[ok]
+  obs <- obs[ok]
+  sim <- sim[ok]
   if (length(e) == 0) {
     return(data.frame(n = 0, mae = NA_real_, rmse = NA_real_, bias = NA_real_, medae = NA_real_, within_7_days_pct = NA_real_, within_14_days_pct = NA_real_, r2 = NA_real_))
   }
+  r2_val <- if (length(e) >= 3 && stats::sd(obs) > 0 && stats::sd(sim) > 0) stats::cor(obs, sim)^2 else NA_real_
   data.frame(
     n = length(e),
     mae = mean(abs(e)),
@@ -497,7 +548,7 @@ metric_one <- function(df, phase) {
     medae = median(abs(e)),
     within_7_days_pct = mean(abs(e) <= 7) * 100,
     within_14_days_pct = mean(abs(e) <= 14) * 100,
-    r2 = NA_real_
+    r2 = r2_val
   )
 }
 
@@ -518,15 +569,28 @@ metrics_station <- pairs %>%
 readr::write_csv(metrics, file.path(res_dir, "validation_metrics.csv"))
 readr::write_csv(metrics_station, file.path(res_dir, "validation_metrics_by_station.csv"))
 
-p1 <- ggplot(pairs, aes(observed_planting_date, simulated_planting_date, colour = crop_name)) +
-  geom_point(alpha = 0.7) + geom_abline(slope = 1, intercept = 0, linetype = 2) +
-  labs(x = "Observed planting date", y = "Simulated planting date", colour = "Crop") +
+pairs_plot <- pairs %>%
+  mutate(
+    observed_planting_doy = lubridate::yday(observed_planting_date),
+    simulated_planting_doy = lubridate::yday(simulated_planting_date),
+    observed_harvest_doy = lubridate::yday(observed_harvest_date),
+    simulated_harvest_doy = lubridate::yday(simulated_harvest_date)
+  )
+readr::write_csv(pairs_plot, file.path(res_dir, "validation_pairs_with_doy.csv"))
+
+p1 <- ggplot(pairs_plot, aes(observed_planting_doy, simulated_planting_doy, colour = crop_name)) +
+  geom_point(alpha = 0.65) +
+  geom_abline(slope = 1, intercept = 0, linetype = 2) +
+  coord_equal(xlim = c(1, 365), ylim = c(1, 365)) +
+  labs(x = "Observed planting day of year", y = "Simulated planting day of year", colour = "Crop") +
   theme_minimal(base_size = 12)
 ggsave(file.path(res_dir, "validation_scatter_planting.png"), p1, width = 8, height = 6, dpi = 300)
 
-p2 <- ggplot(pairs, aes(observed_harvest_date, simulated_harvest_date, colour = crop_name)) +
-  geom_point(alpha = 0.7) + geom_abline(slope = 1, intercept = 0, linetype = 2) +
-  labs(x = "Observed harvest date", y = "Simulated harvest date", colour = "Crop") +
+p2 <- ggplot(pairs_plot, aes(observed_harvest_doy, simulated_harvest_doy, colour = crop_name)) +
+  geom_point(alpha = 0.65) +
+  geom_abline(slope = 1, intercept = 0, linetype = 2) +
+  coord_equal(xlim = c(1, 365), ylim = c(1, 365)) +
+  labs(x = "Observed harvest day of year", y = "Simulated harvest day of year", colour = "Crop") +
   theme_minimal(base_size = 12)
 ggsave(file.path(res_dir, "validation_scatter_harvest.png"), p2, width = 8, height = 6, dpi = 300)
 
@@ -534,6 +598,8 @@ summary_lines <- c(
   "ThermoPheno DWD validation summary",
   paste("Run date:", Sys.Date()),
   paste("Validation pairs:", nrow(pairs)),
+  paste("Phenology stations:", dplyr::n_distinct(pairs$station_id_pheno)),
+  paste("Climate stations:", dplyr::n_distinct(pairs$climate_station_id)),
   "",
   capture.output(print(metrics))
 )
