@@ -2,11 +2,7 @@
 \alias{ThermoPheno}
 \title{Launch the ThermoPheno Shiny application}
 \usage{
-ThermoPheno(...)
+ThermoPheno()
 }
-\description{
-Launch the ThermoPheno Shiny application. See the README and function source documentation for detailed arguments.
-}
-\value{
-A model result, helper object, or side effect depending on the function.
-}
+\value{Called for its side effect of launching the app.}
+\description{Alias for \code{run_thermopheno_app()}.}

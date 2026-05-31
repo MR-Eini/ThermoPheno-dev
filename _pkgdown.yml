@@ -1,38 +1,26 @@
 url: https://mr-eini.github.io/ThermoPheno-dev/
 template:
   bootstrap: 5
-  bootswatch: flatly
-  bslib:
-    primary: "#146C94"
-    secondary: "#F6F1F1"
-
 navbar:
   structure:
-    left: [home, reference, articles, news]
+    left: [reference, articles, news]
     right: [github]
-  components:
-    github:
-      icon: fab fa-github
-      href: https://github.com/MR-Eini/ThermoPheno
-
-home:
-  title: ThermoPheno
-  description: Thermal-time crop phenology simulation with a Shiny app and DWD validation workflow.
-
 reference:
-  - title: Launching the app
-    contents:
-      - ThermoPheno
-      - run_thermopheno_app
   - title: Core model functions
     contents:
       - prepare_weather
       - calc_daily_tt
       - estimate_required_tt
+      - estimate_required_tt_from_observed
       - find_planting_date
       - simulate_one_year
       - run_simulation
       - default_parameters
-  - title: Validation helper
+  - title: Validation helpers
     contents:
       - compare_validation_metrics
+      - validate_weather_dwd
+  - title: App launcher
+    contents:
+      - run_thermopheno_app
+      - ThermoPheno

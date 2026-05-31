@@ -1,8 +1,8 @@
-# ThermoPheno development news
+# ThermoPheno 0.1.0
 
-## ThermoPheno 0.1.0.9000
-
-- Added DWD Open Data access helpers using `rdwd` for daily temperature and crop phenology retrieval with user-defined local cache directories.
-- Added validation table helper with observed/simulated dates, error in days, MAE, RMSE, bias, and R².
-- Added CI-safe tests (including mocked DWD access tests) and DWD validation workflow documentation.
-- Improved README, pkgdown metadata, and workflow support for DWD validation usage.
+- Initial formal R-package structure.
+- Added thermal-time functions: simple, capped, and triangular methods.
+- Added summer- and winter-crop simulation logic.
+- Added Shiny application launcher.
+- Added observed-calendar thermal-time calibration through `estimate_required_tt_from_observed()`.
+- Added testthat unit tests and example weather/scenario data.

@@ -121,8 +121,7 @@ estimate_required_tt <- function(weather,
   if (length(yrs) == 0) stop("No overlap between baseline years and weather years.", call. = FALSE)
 
   out <- lapply(yrs, function(yr) {
-    plant_year <- if (crop_type == "winter") yr else yr
-    plant_date <- clamp_year_day(plant_year, planting_mmdd)
+    plant_date <- clamp_year_day(yr, planting_mmdd)
     end_date <- plant_date + as.integer(days_to_maturity - 1)
     sub <- weather[weather$date >= plant_date & weather$date <= end_date, , drop = FALSE]
 
@@ -561,7 +560,7 @@ compare_validation_metrics <- function(df, observed_col = "observed_date", simul
 
 #' Estimate required thermal time from observed planting and harvest dates
 #'
-#' @param weather Prepared weather data from prepare_weather().
+#' @param weather Prepared weather data from [prepare_weather()].
 #' @param observed_calendar Data frame with observed planting and harvest dates.
 #' @param calibration_years Years used for thermal-time calibration.
 #' @param planting_col Name of observed planting-date column.
@@ -570,10 +569,9 @@ compare_validation_metrics <- function(df, observed_col = "observed_date", simul
 #' @param t_base Base temperature.
 #' @param t_opt Optimum temperature.
 #' @param t_max_cut Upper temperature cutoff.
-#' @param tt_mode Thermal-time method: simple, capped, or triangular.
-#' @param summary_fun Summary method for annual TT values: median or mean.
+#' @param tt_mode Thermal-time method: `simple`, `capped`, or `triangular`.
+#' @param summary_fun Summary method for annual TT values: `median` or `mean`.
 #' @param min_weather_coverage Minimum fraction of daily weather records required.
-#'
 #' @return A list containing yearly observed TT values and the estimated required TT.
 #' @export
 estimate_required_tt_from_observed <- function(
@@ -591,59 +589,36 @@ estimate_required_tt_from_observed <- function(
     min_weather_coverage = 0.95
 ) {
   summary_fun <- match.arg(summary_fun)
-
-  if (!is.data.frame(weather)) {
-    stop("`weather` must be a data frame.", call. = FALSE)
-  }
-
-  if (!is.data.frame(observed_calendar)) {
-    stop("`observed_calendar` must be a data frame.", call. = FALSE)
-  }
+  if (!is.data.frame(weather)) stop("`weather` must be a data frame.", call. = FALSE)
+  if (!is.data.frame(observed_calendar)) stop("`observed_calendar` must be a data frame.", call. = FALSE)
 
   if (!all(c("date", "tmin", "tmax") %in% names(weather))) {
     stop("weather must contain `date`, `tmin`, and `tmax` columns.", call. = FALSE)
   }
-
-  if (!inherits(weather$date, "Date") || !"tmean" %in% names(weather)) {
-    weather <- prepare_weather(weather)
-  }
+  if (!inherits(weather$date, "Date") || !"tmean" %in% names(weather)) weather <- prepare_weather(weather)
 
   required_cols <- c(planting_col, harvest_col, year_col)
   missing_cols <- setdiff(required_cols, names(observed_calendar))
-
   if (length(missing_cols) > 0) {
-    stop(
-      "observed_calendar is missing required columns: ",
-      paste(missing_cols, collapse = ", "),
-      call. = FALSE
-    )
+    stop("observed_calendar is missing required columns: ", paste(missing_cols, collapse = ", "), call. = FALSE)
   }
 
-  obs <- observed_calendar |>
-    dplyr::mutate(
-      observed_planting_tmp = as.Date(.data[[planting_col]]),
-      observed_harvest_tmp  = as.Date(.data[[harvest_col]]),
-      crop_year_tmp         = as.integer(.data[[year_col]])
-    ) |>
-    dplyr::filter(
-      crop_year_tmp %in% calibration_years,
-      !is.na(observed_planting_tmp),
-      !is.na(observed_harvest_tmp),
-      observed_harvest_tmp >= observed_planting_tmp
-    )
+  obs <- observed_calendar
+  obs$observed_planting_tmp <- as.Date(obs[[planting_col]])
+  obs$observed_harvest_tmp <- as.Date(obs[[harvest_col]])
+  obs$crop_year_tmp <- as.integer(obs[[year_col]])
+  obs <- obs[obs$crop_year_tmp %in% calibration_years &
+             !is.na(obs$observed_planting_tmp) &
+             !is.na(obs$observed_harvest_tmp) &
+             obs$observed_harvest_tmp >= obs$observed_planting_tmp, , drop = FALSE]
 
-  if (nrow(obs) == 0) {
-    stop("No valid observed planting-harvest pairs in calibration years.", call. = FALSE)
-  }
+  if (nrow(obs) == 0) stop("No valid observed planting-harvest pairs in calibration years.", call. = FALSE)
 
-  yearly_tt <- lapply(seq_len(nrow(obs)), function(i) {
+  yearly_list <- lapply(seq_len(nrow(obs)), function(i) {
     plant_date <- obs$observed_planting_tmp[i]
     harvest_date <- obs$observed_harvest_tmp[i]
-
-    sub <- weather |>
-      dplyr::filter(date >= plant_date, date <= harvest_date) |>
-      dplyr::arrange(date)
-
+    sub <- weather[weather$date >= plant_date & weather$date <= harvest_date, , drop = FALSE]
+    sub <- sub[order(sub$date), , drop = FALSE]
     expected_days <- as.integer(harvest_date - plant_date) + 1
     coverage <- if (expected_days > 0) nrow(sub) / expected_days else 0
 
@@ -655,7 +630,8 @@ estimate_required_tt_from_observed <- function(
         expected_days = expected_days,
         available_weather_days = nrow(sub),
         weather_coverage = coverage,
-        observed_required_tt = NA_real_
+        observed_required_tt = NA_real_,
+        stringsAsFactors = FALSE
       ))
     }
 
@@ -675,17 +651,14 @@ estimate_required_tt_from_observed <- function(
       expected_days = expected_days,
       available_weather_days = nrow(sub),
       weather_coverage = coverage,
-      observed_required_tt = sum(tt, na.rm = TRUE)
+      observed_required_tt = sum(tt, na.rm = TRUE),
+      stringsAsFactors = FALSE
     )
-  }) |>
-    dplyr::bind_rows()
+  })
 
-  valid_tt <- yearly_tt |>
-    dplyr::filter(is.finite(observed_required_tt))
-
-  if (nrow(valid_tt) == 0) {
-    stop("Could not estimate observed thermal-time requirement.", call. = FALSE)
-  }
+  yearly_tt <- do.call(rbind, yearly_list)
+  valid_tt <- yearly_tt[is.finite(yearly_tt$observed_required_tt), , drop = FALSE]
+  if (nrow(valid_tt) == 0) stop("Could not estimate observed thermal-time requirement.", call. = FALSE)
 
   required_tt <- if (summary_fun == "median") {
     stats::median(valid_tt$observed_required_tt, na.rm = TRUE)

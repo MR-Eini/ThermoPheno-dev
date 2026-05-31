@@ -1,12 +1,11 @@
 \name{prepare_weather}
 \alias{prepare_weather}
-\title{Prepare daily weather data}
+\title{Prepare daily weather data for ThermoPheno}
 \usage{
-prepare_weather(...)
+prepare_weather(df)
 }
-\description{
-Prepare daily weather data. See the README and function source documentation for detailed arguments.
+\arguments{
+  \item{df}{Data frame with at least \code{date}, \code{tmin}, and \code{tmax}.}
 }
-\value{
-A model result, helper object, or side effect depending on the function.
-}
+\value{A data frame sorted by date with derived \code{year}, \code{doy}, and \code{tmean} columns.}
+\description{Prepare daily weather data for ThermoPheno}

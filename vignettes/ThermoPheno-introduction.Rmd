@@ -1,0 +1,16 @@
+---
+title: "ThermoPheno introduction"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{ThermoPheno introduction}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, eval=FALSE}
+library(ThermoPheno)
+weather <- prepare_weather(read.csv(system.file("extdata", "Germany_historical_1981_2010_dummy_data.csv", package = "ThermoPheno")))
+params <- default_parameters("summer")
+req <- estimate_required_tt(weather, 1981:2010, params$baseline_planting_mmdd, params$days_to_maturity, params$t_base, params$t_opt, params$t_max_cut, "triangular", "summer")
+run_simulation(weather, params$crop_name, req$required_tt, params$earliest_planting_mmdd, params$latest_planting_mmdd, params$latest_harvest_mmdd, params$t_base, params$t_opt, params$t_max_cut, "triangular", "summer")
+```

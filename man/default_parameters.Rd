@@ -1,12 +1,11 @@
 \name{default_parameters}
 \alias{default_parameters}
-\title{Default crop parameters}
+\title{Default ThermoPheno crop parameters}
 \usage{
-default_parameters(...)
+default_parameters(crop_type = c("summer", "winter"))
 }
-\description{
-Default crop parameters. See the README and function source documentation for detailed arguments.
+\arguments{
+  \item{crop_type}{Crop type: summer or winter.}
 }
-\value{
-A model result, helper object, or side effect depending on the function.
-}
+\value{A named list of default crop parameters.}
+\description{Default ThermoPheno crop parameters}

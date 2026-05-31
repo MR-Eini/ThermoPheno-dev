@@ -1,3 +1,9 @@
+required_app_packages <- c("shiny", "bslib", "dplyr", "lubridate", "ggplot2", "DT", "readr")
+missing_app_packages <- required_app_packages[!vapply(required_app_packages, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_app_packages) > 0) {
+  stop("Please install the following packages to run the ThermoPheno app: ", paste(missing_app_packages, collapse = ", "), call. = FALSE)
+}
+
 library(shiny)
 library(bslib)
 library(dplyr)

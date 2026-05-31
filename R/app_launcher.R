@@ -11,6 +11,10 @@
 #' ThermoPheno()
 #' }
 run_thermopheno_app <- function() {
+  if (!requireNamespace("shiny", quietly = TRUE)) {
+    stop("Package 'shiny' is required to run the ThermoPheno app. Install it with install.packages('shiny').", call. = FALSE)
+  }
+
   app_dir <- system.file("app", package = "ThermoPheno")
   if (app_dir == "") {
     stop("App not found. Please reinstall ThermoPheno.", call. = FALSE)

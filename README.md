@@ -1,14 +1,20 @@
 # ThermoPheno
 
-**Thermal-time-based crop phenology model for historical analysis, climate-change impact assessment, and real-data validation.**
+ThermoPheno is an R package and Shiny application for thermal-time-based crop phenology simulation. It estimates planting, maturity, and harvest timing from daily minimum and maximum temperature data and can be used for historical analysis, scenario comparison, and validation against observed crop calendars.
 
-ThermoPheno simulates crop planting, maturity, and harvest timing using daily minimum and maximum temperature data. It supports simple, capped, and triangular thermal-time formulations, summer and winter crop logic, dynamic planting windows, forced harvest rules, and scenario comparison.
+## Installation from this ZIP
 
-## Installation
+Unzip the package, then install the source folder:
 
 ```r
-if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-remotes::install_github("MR-Eini/ThermoPheno")
+install.packages(c("remotes", "testthat"))
+remotes::install_local("ThermoPheno", dependencies = TRUE)
+```
+
+Alternatively, if you use the included source archive:
+
+```r
+install.packages("ThermoPheno_0.1.0.tar.gz", repos = NULL, type = "source")
 ```
 
 ## Launch the Shiny app
@@ -26,7 +32,7 @@ ThermoPheno()
 
 ## Example data
 
-Example files are bundled in `inst/extdata`:
+Bundled example files are available in `inst/extdata`:
 
 ```r
 system.file("extdata", "Germany_historical_1981_2010_dummy_data.csv", package = "ThermoPheno")
@@ -74,24 +80,13 @@ sim <- run_simulation(
 head(sim)
 ```
 
-## Real-data validation
-
-A DWD validation workflow is included in `validation/`. It downloads crop phenology observations and daily climate records, pairs phenology stations with nearest DWD climate stations, runs ThermoPheno, and exports validation metrics and figures.
-
-```r
-source("validation/dwd_validate_thermopheno.R")
-```
-
-Results are written to:
-
-```text
-validation/results/
-```
-
 ## Local checks
 
 ```r
-source("RUN_CHECKS.R")
+devtools::load_all()
+devtools::document()
+devtools::test()
+rcmdcheck::rcmdcheck(args = c("--no-manual", "--as-cran"))
 ```
 
 ## Main assumptions
@@ -99,7 +94,7 @@ source("RUN_CHECKS.R")
 - Crop development is driven by air temperature only.
 - Daily mean temperature is calculated as `(tmin + tmax) / 2`.
 - The current winter-crop logic includes simple vernalization and dormancy rules.
-- Photoperiod, radiation, water stress, cultivar differences, and management behaviour are not explicitly modelled.
+- Photoperiod, radiation, water stress, cultivar differences, and adaptive farmer behaviour are not explicitly modelled.
 
 ## License
 
