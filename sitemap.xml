@@ -1,9 +1,19 @@
 <urlset xmlns = 'http://www.sitemaps.org/schemas/sitemap/0.9'>
-<url><loc>/404.html</loc></url>
-<url><loc>/LICENSE-text.html</loc></url>
-<url><loc>/authors.html</loc></url>
-<url><loc>/index.html</loc></url>
-<url><loc>/reference/ThermoPheno.html</loc></url>
-<url><loc>/reference/index.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/404.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/LICENSE-text.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/authors.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/index.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/news/index.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/ThermoPheno.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/calc_daily_tt.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/compare_validation_metrics.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/default_parameters.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/estimate_required_tt.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/find_planting_date.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/index.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/prepare_weather.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/run_simulation.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/run_thermopheno_app.html</loc></url>
+<url><loc>https://mr-eini.github.io/ThermoPheno-dev/reference/simulate_one_year.html</loc></url>
 </urlset>
 

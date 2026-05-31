@@ -6,7 +6,7 @@ source documentation for detailed arguments.
 ## Usage
 
 ``` r
-ThermoPheno(...)
+run_thermopheno_app(...)
 ```
 
 ## Value
