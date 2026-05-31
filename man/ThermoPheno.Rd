@@ -2,16 +2,11 @@
 \alias{ThermoPheno}
 \title{Launch the ThermoPheno Shiny application}
 \usage{
-ThermoPheno()
+ThermoPheno(...)
 }
 \description{
-Starts the ThermoPheno interactive application for historical analysis and climate change impact assessment of crop phenology.
+Launch the ThermoPheno Shiny application. See the README and function source documentation for detailed arguments.
 }
 \value{
-The function is called for its side effect of launching the Shiny application.
-}
-\examples{
-\dontrun{
-ThermoPheno()
-}
+A model result, helper object, or side effect depending on the function.
 }

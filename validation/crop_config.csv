@@ -1,0 +1,4 @@
+crop_name,crop_type,file_pattern,planting_phase_regex,harvest_phase_regex,days_to_maturity,t_base,t_opt,t_max_cut,baseline_planting_mmdd,earliest_planting_mmdd,latest_planting_mmdd,latest_harvest_mmdd,min_mean_temp_plant,winter_plant_temp_min,winter_plant_temp_max,vernalization_required,vernalization_days_required
+Maize,summer,Mais,"Aussaat|Saat|Bestellung|Pflanz", "Ernte|Drusch|Abreife",140,8,25,35,04-15,03-15,05-31,10-31,8,5,15,FALSE,0
+Winter wheat,winter,Winterweizen,"Aussaat|Saat|Bestellung", "Ernte|Drusch|Vollreife|Gelbreife",300,0,18,30,10-01,09-15,11-15,08-15,8,5,15,TRUE,45
+Sugar beet,summer,Zuckerruebe,"Aussaat|Saat|Bestellung", "Ernte|Rodung",180,3,22,35,04-01,03-15,05-31,11-15,5,5,15,FALSE,0

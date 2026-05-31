@@ -2,20 +2,22 @@ Package: ThermoPheno
 Type: Package
 Title: Thermal-Time-Based Crop Phenology Model
 Version: 0.1.0
-Authors@R: 
-    person("Mohammad Reza Eini", email = "mreiniut@gmail.com", role = c("aut", "cre"))
-Description: 
-    ThermoPheno is a thermal-time-based phenology model for simulating crop 
-    growing seasons under historical and climate change conditions. It includes 
-    a Shiny application and a set of functions for estimating thermal time, 
-    crop maturity, and growing season dynamics.
+Authors@R:
+    person(given = "Mohammad Reza",
+           family = "Eini",
+           email = "mreiniut@gmail.com",
+           role = c("aut", "cre"))
+Description: A thermal-time-based crop phenology model for simulating crop
+    planting, maturity, and harvest timing under historical and climate-change
+    conditions. The package includes reusable model functions, a Shiny
+    application, example data, tests, and a reproducible validation workflow
+    for DWD crop phenology and daily climate observations.
 License: MIT + file LICENSE
-URL: https://mr-eini.github.io/ThermoPheno-dev/,
-    https://github.com/MR-Eini/ThermoPheno-dev
-BugReports: https://github.com/MR-Eini/ThermoPheno-dev/issues
 Encoding: UTF-8
 LazyData: true
-Imports: 
+Depends:
+    R (>= 4.1)
+Imports:
     shiny,
     bslib,
     dplyr,
@@ -26,11 +28,19 @@ Imports:
     ggridges,
     RColorBrewer,
     tidyr,
-    tibble
-Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.1
+    tibble,
+    rlang,
+    stats,
+    utils,
+    grDevices
 Suggests:
     testthat (>= 3.0.0),
-    pkgdown,
-    rdwd
+    devtools,
+    rcmdcheck,
+    roxygen2,
+    pkgdown
 Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+URL: https://github.com/MR-Eini/ThermoPheno, https://mr-eini.github.io/ThermoPheno-dev/
+BugReports: https://github.com/MR-Eini/ThermoPheno/issues

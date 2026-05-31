@@ -1,79 +1,110 @@
-library(dplyr)
-library(lubridate)
-
-# Convert date-like inputs safely to Date objects.
-safe_as_date <- function(x) as.Date(x)
-
-# Create a Date from year and MM-DD text (e.g., 2020 + '04-15').
-clamp_year_day <- function(year, mmdd) {
-  as.Date(paste0(year, "-", mmdd))
-}
-
-# Standardize and prepare daily weather inputs for simulation.
-# Expected columns: date, tmin, tmax (case-insensitive).
+#' Prepare daily weather data for ThermoPheno
+#'
+#' Standardises column names and adds `year`, `doy`, and `tmean` columns.
+#'
+#' @param df Data frame with at least `date`, `tmin`, and `tmax` columns.
+#' @return A data frame sorted by date.
+#' @export
 prepare_weather <- function(df) {
+  if (!is.data.frame(df)) stop("`df` must be a data frame.", call. = FALSE)
+
   names(df) <- tolower(names(df))
   required <- c("date", "tmin", "tmax")
-  miss <- setdiff(required, names(df))
-  if (length(miss) > 0) {
-    stop(paste("Missing required weather columns:", paste(miss, collapse = ", ")))
+  missing_cols <- setdiff(required, names(df))
+  if (length(missing_cols) > 0) {
+    stop("Missing required weather columns: ", paste(missing_cols, collapse = ", "), call. = FALSE)
   }
 
-  validation <- validate_weather_dwd(df, strict = FALSE)
-  if (!validation$ok) {
-    stop(paste(validation$errors, collapse = '\n'))
+  df$date <- as.Date(df$date)
+  if (any(is.na(df$date))) stop("`date` contains values that could not be converted to Date.", call. = FALSE)
+
+  df$tmin <- suppressWarnings(as.numeric(df$tmin))
+  df$tmax <- suppressWarnings(as.numeric(df$tmax))
+  if (any(is.na(df$tmin)) || any(is.na(df$tmax))) {
+    stop("`tmin` and `tmax` must be numeric and cannot contain NA after conversion.", call. = FALSE)
   }
 
-  df %>%
-    mutate(
-      date = safe_as_date(date),
-      year = year(date),
-      doy = yday(date),
-      tmean = (tmin + tmax) / 2
-    ) %>%
-    arrange(date)
+  df$year <- as.integer(format(df$date, "%Y"))
+  df$doy <- as.integer(format(df$date, "%j"))
+  df$tmean <- (df$tmin + df$tmax) / 2
+  df[order(df$date), , drop = FALSE]
 }
 
-# Calculate daily thermal time (degree-days) using one of three methods.
-calc_daily_tt <- function(tmin, tmax, t_base, t_opt = NA, t_max_cut = NA,
+clamp_year_day <- function(year, mmdd) {
+  as.Date(paste0(as.integer(year), "-", mmdd))
+}
+
+#' Calculate daily thermal time
+#'
+#' @param tmin Daily minimum temperature in degrees Celsius.
+#' @param tmax Daily maximum temperature in degrees Celsius.
+#' @param t_base Base temperature.
+#' @param t_opt Optimum temperature; required for `capped` and `triangular` modes.
+#' @param t_max_cut Upper cutoff temperature; required for `triangular` mode.
+#' @param mode One of `simple`, `capped`, or `triangular`.
+#' @return Numeric vector of daily thermal time values.
+#' @export
+calc_daily_tt <- function(tmin, tmax, t_base, t_opt = NA_real_, t_max_cut = NA_real_,
                           mode = c("simple", "capped", "triangular")) {
   mode <- match.arg(mode)
-  tmean <- (tmin + tmax) / 2
+  tmean <- (as.numeric(tmin) + as.numeric(tmax)) / 2
 
   if (mode == "simple") {
-    tt <- pmax(tmean - t_base, 0)
-  } else if (mode == "capped") {
-    if (is.na(t_opt)) t_opt <- 999
-    tt <- pmax(pmin(tmean, t_opt) - t_base, 0)
-  } else {
-    if (is.na(t_opt) || is.na(t_max_cut)) {
-      stop("For triangular mode, both t_opt and t_max_cut must be provided.")
-    }
-    tt <- numeric(length(tmean))
-    idx1 <- tmean <= t_base
-    idx2 <- tmean > t_base & tmean <= t_opt
-    idx3 <- tmean > t_opt & tmean < t_max_cut
-    idx4 <- tmean >= t_max_cut
-
-    tt[idx1] <- 0
-    tt[idx2] <- tmean[idx2] - t_base
-    peak <- t_opt - t_base
-    tt[idx3] <- peak * (t_max_cut - tmean[idx3]) / (t_max_cut - t_opt)
-    tt[idx4] <- 0
-    tt[tt < 0] <- 0
+    return(pmax(tmean - t_base, 0))
   }
 
+  if (mode == "capped") {
+    if (is.na(t_opt)) stop("For capped mode, `t_opt` must be provided.", call. = FALSE)
+    return(pmax(pmin(tmean, t_opt) - t_base, 0))
+  }
+
+  if (is.na(t_opt) || is.na(t_max_cut)) {
+    stop("For triangular mode, both `t_opt` and `t_max_cut` must be provided.", call. = FALSE)
+  }
+  if (t_opt <= t_base) stop("`t_opt` must be greater than `t_base`.", call. = FALSE)
+  if (t_max_cut <= t_opt) stop("`t_max_cut` must be greater than `t_opt`.", call. = FALSE)
+
+  tt <- numeric(length(tmean))
+  idx1 <- tmean <= t_base
+  idx2 <- tmean > t_base & tmean <= t_opt
+  idx3 <- tmean > t_opt & tmean < t_max_cut
+  idx4 <- tmean >= t_max_cut
+
+  tt[idx1] <- 0
+  tt[idx2] <- tmean[idx2] - t_base
+  peak <- t_opt - t_base
+  tt[idx3] <- peak * (t_max_cut - tmean[idx3]) / (t_max_cut - t_opt)
+  tt[idx4] <- 0
+  tt[tt < 0] <- 0
   tt
 }
 
-# Estimate required thermal time from a baseline period.
+#' Estimate required thermal time from a reference baseline period
+#'
+#' @param weather Prepared weather data returned by [prepare_weather()].
+#' @param baseline_years Integer vector of baseline years.
+#' @param planting_mmdd Reference planting date in `MM-DD` format.
+#' @param days_to_maturity Reference number of days from planting to maturity.
+#' @param t_base Base temperature.
+#' @param t_opt Optimum temperature.
+#' @param t_max_cut Upper cutoff temperature.
+#' @param tt_mode Thermal-time method.
+#' @param crop_type `summer` or `winter`.
+#' @param winter_dormancy_temp Dormancy threshold for winter crops.
+#' @param vernalization_required Logical; whether vernalization is required.
+#' @param vernalization_temp_min Minimum temperature for vernalization days.
+#' @param vernalization_temp_max Maximum temperature for vernalization days.
+#' @param vernalization_days_required Required number of vernalization days.
+#' @param spring_regrowth_temp Spring regrowth threshold.
+#' @return A list with yearly thermal-time values and the mean required thermal time.
+#' @export
 estimate_required_tt <- function(weather,
                                  baseline_years,
                                  planting_mmdd,
                                  days_to_maturity,
                                  t_base,
-                                 t_opt = NA,
-                                 t_max_cut = NA,
+                                 t_opt = NA_real_,
+                                 t_max_cut = NA_real_,
                                  tt_mode = "simple",
                                  crop_type = c("summer", "winter"),
                                  winter_dormancy_temp = 0,
@@ -83,72 +114,55 @@ estimate_required_tt <- function(weather,
                                  vernalization_days_required = 30,
                                  spring_regrowth_temp = 5) {
   crop_type <- match.arg(crop_type)
+  if (!"year" %in% names(weather) || !"tmean" %in% names(weather)) weather <- prepare_weather(weather)
+
   yrs <- sort(unique(weather$year))
   yrs <- yrs[yrs %in% baseline_years]
-  if (length(yrs) == 0) stop("No overlap between baseline years and weather years.")
+  if (length(yrs) == 0) stop("No overlap between baseline years and weather years.", call. = FALSE)
 
-  if (crop_type == "summer") {
-    yearly <- lapply(yrs, function(yr) {
-      plant_date <- clamp_year_day(yr, planting_mmdd)
-      end_date <- plant_date + days(days_to_maturity - 1)
-      sub <- weather %>% filter(date >= plant_date, date <= end_date)
+  out <- lapply(yrs, function(yr) {
+    plant_year <- if (crop_type == "winter") yr else yr
+    plant_date <- clamp_year_day(plant_year, planting_mmdd)
+    end_date <- plant_date + as.integer(days_to_maturity - 1)
+    sub <- weather[weather$date >= plant_date & weather$date <= end_date, , drop = FALSE]
 
-      if (nrow(sub) < days_to_maturity) {
-        return(data.frame(year = yr, required_tt = NA_real_))
-      }
+    if (nrow(sub) < days_to_maturity) {
+      return(data.frame(year = yr, required_tt = NA_real_, stringsAsFactors = FALSE))
+    }
 
+    if (crop_type == "summer") {
       tt <- calc_daily_tt(sub$tmin, sub$tmax, t_base, t_opt, t_max_cut, mode = tt_mode)
-      data.frame(year = yr, required_tt = sum(tt, na.rm = TRUE))
-    }) %>% bind_rows()
-  } else {
-    yearly <- lapply(yrs, function(yr) {
-      plant_date <- clamp_year_day(yr, planting_mmdd)
-      end_date <- plant_date + days(days_to_maturity - 1)
-      sub <- weather %>% filter(date >= plant_date, date <= end_date) %>% arrange(date)
+      return(data.frame(year = yr, required_tt = sum(tt, na.rm = TRUE), stringsAsFactors = FALSE))
+    }
 
-      if (nrow(sub) < days_to_maturity) {
-        return(data.frame(year = yr, required_tt = NA_real_))
+    vernal_days <- 0
+    vern_sat <- !isTRUE(vernalization_required)
+    cum_tt <- 0
+
+    for (i in seq_len(nrow(sub))) {
+      tmean_i <- sub$tmean[i]
+      if (isTRUE(vernalization_required) && !vern_sat) {
+        if (tmean_i >= vernalization_temp_min && tmean_i <= vernalization_temp_max) {
+          vernal_days <- vernal_days + 1
+        }
+        if (vernal_days >= vernalization_days_required) vern_sat <- TRUE
       }
 
-      vernal_days <- 0
-      vern_sat <- ifelse(vernalization_required, FALSE, TRUE)
-      regrowth_started <- FALSE
-      cum_tt <- 0
-
-      for (i in seq_len(nrow(sub))) {
-        tmean_i <- sub$tmean[i]
-
-        if (vernalization_required && !vern_sat) {
-          if (tmean_i >= vernalization_temp_min && tmean_i <= vernalization_temp_max) {
-            vernal_days <- vernal_days + 1
-          }
-          if (vernal_days >= vernalization_days_required) {
-            vern_sat <- TRUE
-          }
-        }
-
-        if (vern_sat && !regrowth_started && tmean_i >= spring_regrowth_temp) {
-          regrowth_started <- TRUE
-        }
-
-        if (!vern_sat) {
-          tt_i <- 0
-        } else {
-          tt_i <- calc_daily_tt(sub$tmin[i], sub$tmax[i], t_base, t_opt, t_max_cut, mode = tt_mode)
-          if (tmean_i <= winter_dormancy_temp) {
-            tt_i <- 0
-          }
-        }
-
-        cum_tt <- cum_tt + tt_i
+      if (!vern_sat) {
+        tt_i <- 0
+      } else {
+        tt_i <- calc_daily_tt(sub$tmin[i], sub$tmax[i], t_base, t_opt, t_max_cut, mode = tt_mode)
+        if (tmean_i <= winter_dormancy_temp) tt_i <- 0
       }
+      cum_tt <- cum_tt + tt_i
+    }
 
-      data.frame(year = yr, required_tt = cum_tt)
-    }) %>% bind_rows()
-  }
+    data.frame(year = yr, required_tt = cum_tt, stringsAsFactors = FALSE)
+  })
 
-  valid <- yearly %>% filter(is.finite(required_tt))
-  if (nrow(valid) == 0) stop("Could not estimate required thermal time from baseline period.")
+  yearly <- do.call(rbind, out)
+  valid <- yearly[is.finite(yearly$required_tt), , drop = FALSE]
+  if (nrow(valid) == 0) stop("Could not estimate required thermal time from baseline period.", call. = FALSE)
 
   list(
     yearly_required_tt = yearly,
@@ -156,7 +170,17 @@ estimate_required_tt <- function(weather,
   )
 }
 
-# Find first valid planting day inside user-defined window.
+#' Find the first planting date within an allowed planting window
+#'
+#' @param weather_window Prepared weather data covering the planting window.
+#' @param earliest_planting_date Earliest allowed planting date.
+#' @param latest_planting_date Latest allowed planting date.
+#' @param crop_type `summer` or `winter`.
+#' @param min_mean_temp_plant Minimum daily mean temperature for summer-crop planting.
+#' @param winter_plant_temp_min Minimum daily mean temperature for winter-crop planting.
+#' @param winter_plant_temp_max Maximum daily mean temperature for winter-crop planting.
+#' @return A list with `found` and `planting_date`.
+#' @export
 find_planting_date <- function(weather_window,
                                earliest_planting_date,
                                latest_planting_date,
@@ -165,35 +189,41 @@ find_planting_date <- function(weather_window,
                                winter_plant_temp_min = 5,
                                winter_plant_temp_max = 15) {
   crop_type <- match.arg(crop_type)
+  if (!"tmean" %in% names(weather_window)) weather_window <- prepare_weather(weather_window)
 
-  candidates <- weather_window %>%
-    filter(date >= earliest_planting_date, date <= latest_planting_date) %>%
-    arrange(date)
+  candidates <- weather_window[weather_window$date >= earliest_planting_date & weather_window$date <= latest_planting_date, , drop = FALSE]
+  candidates <- candidates[order(candidates$date), , drop = FALSE]
 
-  if (nrow(candidates) == 0) {
-    return(list(found = FALSE, planting_date = as.Date(NA)))
-  }
+  if (nrow(candidates) == 0) return(list(found = FALSE, planting_date = as.Date(NA)))
 
   for (i in seq_len(nrow(candidates))) {
-    this_date <- candidates$date[i]
     tmean_today <- candidates$tmean[i]
-
-    if (crop_type == "summer") {
-      condition <- tmean_today >= min_mean_temp_plant
+    condition <- if (crop_type == "summer") {
+      tmean_today >= min_mean_temp_plant
     } else {
-      condition <- tmean_today >= winter_plant_temp_min &&
-        tmean_today <= winter_plant_temp_max
+      tmean_today >= winter_plant_temp_min && tmean_today <= winter_plant_temp_max
     }
-
-    if (condition) {
-      return(list(found = TRUE, planting_date = this_date))
-    }
+    if (isTRUE(condition)) return(list(found = TRUE, planting_date = candidates$date[i]))
   }
 
   list(found = FALSE, planting_date = as.Date(NA))
 }
 
-# Simulate one harvest year and return season-level outcomes.
+#' Simulate one crop season
+#'
+#' @inheritParams estimate_required_tt
+#' @param sim_year Harvest year to simulate.
+#' @param required_tt Required thermal time.
+#' @param earliest_planting_mmdd Earliest planting date in `MM-DD` format.
+#' @param latest_planting_mmdd Latest planting date in `MM-DD` format.
+#' @param latest_harvest_mmdd Latest harvest date in `MM-DD` format.
+#' @param forced_harvest_allowed Logical; whether immature forced harvest is allowed.
+#' @param min_fraction_tt_for_forced_harvest Minimum maturity fraction for forced harvest.
+#' @param winter_plant_temp_min Minimum winter-crop planting temperature.
+#' @param winter_plant_temp_max Maximum winter-crop planting temperature.
+#' @param crop_name Crop label.
+#' @return One-row data frame describing the simulated season.
+#' @export
 simulate_one_year <- function(weather,
                               sim_year,
                               required_tt,
@@ -201,8 +231,8 @@ simulate_one_year <- function(weather,
                               latest_planting_mmdd,
                               latest_harvest_mmdd,
                               t_base,
-                              t_opt = NA,
-                              t_max_cut = NA,
+                              t_opt = NA_real_,
+                              t_max_cut = NA_real_,
                               tt_mode = "simple",
                               crop_type = c("summer", "winter"),
                               min_mean_temp_plant = 0,
@@ -218,17 +248,17 @@ simulate_one_year <- function(weather,
                               winter_plant_temp_max = 15,
                               crop_name = NA_character_) {
   crop_type <- match.arg(crop_type)
-  yr <- sim_year
+  if (!"year" %in% names(weather) || !"tmean" %in% names(weather)) weather <- prepare_weather(weather)
 
+  yr <- as.integer(sim_year)
   if (crop_type == "summer") {
-    weather_window <- weather %>% filter(year == yr)
+    weather_window <- weather[weather$year == yr, , drop = FALSE]
     earliest_planting_date <- clamp_year_day(yr, earliest_planting_mmdd)
     latest_planting_date <- clamp_year_day(yr, latest_planting_mmdd)
     latest_harvest_date <- clamp_year_day(yr, latest_harvest_mmdd)
   } else {
-    weather_window <- weather %>%
-      filter(date >= clamp_year_day(yr - 1, earliest_planting_mmdd),
-             date <= clamp_year_day(yr, latest_harvest_mmdd))
+    weather_window <- weather[weather$date >= clamp_year_day(yr - 1, earliest_planting_mmdd) &
+                                weather$date <= clamp_year_day(yr, latest_harvest_mmdd), , drop = FALSE]
     earliest_planting_date <- clamp_year_day(yr - 1, earliest_planting_mmdd)
     latest_planting_date <- clamp_year_day(yr - 1, latest_planting_mmdd)
     latest_harvest_date <- clamp_year_day(yr, latest_harvest_mmdd)
@@ -244,71 +274,65 @@ simulate_one_year <- function(weather,
     winter_plant_temp_max = winter_plant_temp_max
   )
 
-  if (!plant_result$found) {
-    return(data.frame(
+  base_row <- function(status, planting_date = as.Date(NA), maturity_date = as.Date(NA),
+                       harvest_date = as.Date(NA), season_length_days = NA_integer_,
+                       accumulated_tt = 0, maturity_fraction = 0,
+                       forced_harvest = FALSE, regrowth_started = FALSE,
+                       vernalization_satisfied = NA, vernalization_days = NA_real_) {
+    data.frame(
       crop_name = crop_name,
       crop_type = crop_type,
       row_role = "harvest_year",
       year = yr,
-      planting_date = as.Date(NA),
-      maturity_date = as.Date(NA),
-      harvest_date = as.Date(NA),
-      season_length_days = NA_integer_,
-      accumulated_tt = 0,
+      planting_date = as.Date(planting_date),
+      maturity_date = as.Date(maturity_date),
+      harvest_date = as.Date(harvest_date),
+      season_length_days = season_length_days,
+      accumulated_tt = accumulated_tt,
       required_tt = required_tt,
-      maturity_fraction = 0,
+      maturity_fraction = maturity_fraction,
+      status = status,
+      forced_harvest = forced_harvest,
+      regrowth_started = regrowth_started,
+      vernalization_satisfied = vernalization_satisfied,
+      vernalization_days = vernalization_days,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  if (!plant_result$found) {
+    return(base_row(
       status = "not_planted",
-      forced_harvest = FALSE,
-      regrowth_started = FALSE,
-      vernalization_satisfied = ifelse(crop_type == "winter" && vernalization_required, FALSE, NA),
-      vernalization_days = NA_real_
+      vernalization_satisfied = if (crop_type == "winter" && isTRUE(vernalization_required)) FALSE else NA
     ))
   }
 
   planting_date <- plant_result$planting_date
-  sim_period <- weather_window %>%
-    filter(date >= planting_date, date <= latest_harvest_date) %>%
-    arrange(date)
+  sim_period <- weather_window[weather_window$date >= planting_date & weather_window$date <= latest_harvest_date, , drop = FALSE]
+  sim_period <- sim_period[order(sim_period$date), , drop = FALSE]
 
   if (nrow(sim_period) == 0) {
-    return(data.frame(
-      crop_name = crop_name,
-      crop_type = crop_type,
-      row_role = "harvest_year",
-      year = yr,
-      planting_date = planting_date,
-      maturity_date = as.Date(NA),
-      harvest_date = as.Date(NA),
-      season_length_days = NA_integer_,
-      accumulated_tt = 0,
-      required_tt = required_tt,
-      maturity_fraction = 0,
+    return(base_row(
       status = "failed_after_planting",
-      forced_harvest = FALSE,
-      regrowth_started = FALSE,
-      vernalization_satisfied = ifelse(crop_type == "winter" && vernalization_required, FALSE, NA),
-      vernalization_days = NA_real_
+      planting_date = planting_date,
+      vernalization_satisfied = if (crop_type == "winter" && isTRUE(vernalization_required)) FALSE else NA
     ))
   }
 
-  sim_period$daily_tt <- 0
-  sim_period$cum_tt <- 0
-
   vernal_days <- 0
-  vern_sat <- ifelse(crop_type == "winter" && vernalization_required, FALSE, TRUE)
+  vern_sat <- !(crop_type == "winter" && isTRUE(vernalization_required))
   regrowth_started <- FALSE
   cum_tt <- 0
+  cum_vec <- numeric(nrow(sim_period))
 
   for (i in seq_len(nrow(sim_period))) {
     tmean_i <- sim_period$tmean[i]
 
-    if (crop_type == "winter" && vernalization_required && !vern_sat) {
+    if (crop_type == "winter" && isTRUE(vernalization_required) && !vern_sat) {
       if (tmean_i >= vernalization_temp_min && tmean_i <= vernalization_temp_max) {
         vernal_days <- vernal_days + 1
       }
-      if (vernal_days >= vernalization_days_required) {
-        vern_sat <- TRUE
-      }
+      if (vernal_days >= vernalization_days_required) vern_sat <- TRUE
     }
 
     if (crop_type == "winter" && vern_sat && !regrowth_started && tmean_i >= spring_regrowth_temp) {
@@ -318,98 +342,78 @@ simulate_one_year <- function(weather,
     if (crop_type == "winter" && !vern_sat) {
       tt_i <- 0
     } else {
-      tt_i <- calc_daily_tt(
-        tmin = sim_period$tmin[i],
-        tmax = sim_period$tmax[i],
-        t_base = t_base,
-        t_opt = t_opt,
-        t_max_cut = t_max_cut,
-        mode = tt_mode
-      )
-      if (crop_type == "winter" && tmean_i <= winter_dormancy_temp) {
-        tt_i <- 0
-      }
+      tt_i <- calc_daily_tt(sim_period$tmin[i], sim_period$tmax[i], t_base, t_opt, t_max_cut, mode = tt_mode)
+      if (crop_type == "winter" && tmean_i <= winter_dormancy_temp) tt_i <- 0
     }
 
     cum_tt <- cum_tt + tt_i
-    sim_period$daily_tt[i] <- tt_i
-    sim_period$cum_tt[i] <- cum_tt
+    cum_vec[i] <- cum_tt
   }
 
-  accumulated_tt <- dplyr::last(sim_period$cum_tt)
-  maturity_fraction <- accumulated_tt / required_tt
-  mature_idx <- which(sim_period$cum_tt >= required_tt)
+  accumulated_tt <- cum_tt
+  maturity_fraction <- if (isTRUE(required_tt > 0)) accumulated_tt / required_tt else NA_real_
+  mature_idx <- which(cum_vec >= required_tt)
 
   if (length(mature_idx) > 0) {
-    maturity_date <- sim_period$date[min(mature_idx)]
-    harvest_date <- maturity_date
-    accumulated_tt <- sim_period$cum_tt[min(mature_idx)]
+    idx <- min(mature_idx)
+    maturity_date <- sim_period$date[idx]
+    accumulated_tt <- cum_vec[idx]
     maturity_fraction <- accumulated_tt / required_tt
-
-    return(data.frame(
-      crop_name = crop_name,
-      crop_type = crop_type,
-      row_role = "harvest_year",
-      year = yr,
+    return(base_row(
+      status = "mature",
       planting_date = planting_date,
       maturity_date = maturity_date,
-      harvest_date = harvest_date,
-      season_length_days = as.integer(harvest_date - planting_date) + 1,
+      harvest_date = maturity_date,
+      season_length_days = as.integer(maturity_date - planting_date) + 1,
       accumulated_tt = accumulated_tt,
-      required_tt = required_tt,
       maturity_fraction = maturity_fraction,
-      status = "mature",
       forced_harvest = FALSE,
       regrowth_started = regrowth_started,
-      vernalization_satisfied = ifelse(crop_type == "winter" && vernalization_required, vern_sat, NA),
-      vernalization_days = ifelse(crop_type == "winter" && vernalization_required, vernal_days, NA)
+      vernalization_satisfied = if (crop_type == "winter" && isTRUE(vernalization_required)) vern_sat else NA,
+      vernalization_days = if (crop_type == "winter" && isTRUE(vernalization_required)) vernal_days else NA_real_
     ))
   }
 
-  if (forced_harvest_allowed && maturity_fraction >= min_fraction_tt_for_forced_harvest) {
-    harvest_date <- latest_harvest_date
-    return(data.frame(
-      crop_name = crop_name,
-      crop_type = crop_type,
-      row_role = "harvest_year",
-      year = yr,
-      planting_date = planting_date,
-      maturity_date = as.Date(NA),
-      harvest_date = harvest_date,
-      season_length_days = as.integer(harvest_date - planting_date) + 1,
-      accumulated_tt = accumulated_tt,
-      required_tt = required_tt,
-      maturity_fraction = maturity_fraction,
+  if (isTRUE(forced_harvest_allowed) && is.finite(maturity_fraction) &&
+      maturity_fraction >= min_fraction_tt_for_forced_harvest) {
+    return(base_row(
       status = "forced_harvest_immature",
+      planting_date = planting_date,
+      harvest_date = latest_harvest_date,
+      season_length_days = as.integer(latest_harvest_date - planting_date) + 1,
+      accumulated_tt = accumulated_tt,
+      maturity_fraction = maturity_fraction,
       forced_harvest = TRUE,
       regrowth_started = regrowth_started,
-      vernalization_satisfied = ifelse(crop_type == "winter" && vernalization_required, vern_sat, NA),
-      vernalization_days = ifelse(crop_type == "winter" && vernalization_required, vernal_days, NA)
+      vernalization_satisfied = if (crop_type == "winter" && isTRUE(vernalization_required)) vern_sat else NA,
+      vernalization_days = if (crop_type == "winter" && isTRUE(vernalization_required)) vernal_days else NA_real_
     ))
   }
 
-  data.frame(
-    crop_name = crop_name,
-    crop_type = crop_type,
-    row_role = "harvest_year",
-    year = yr,
+  final_status <- if (crop_type == "winter" && isTRUE(vernalization_required) && !vern_sat) {
+    "insufficient_vernalization"
+  } else {
+    "failed_to_mature"
+  }
+
+  base_row(
+    status = final_status,
     planting_date = planting_date,
-    maturity_date = as.Date(NA),
-    harvest_date = as.Date(NA),
     season_length_days = as.integer(latest_harvest_date - planting_date) + 1,
     accumulated_tt = accumulated_tt,
-    required_tt = required_tt,
     maturity_fraction = maturity_fraction,
-    status = ifelse(crop_type == "winter" && vernalization_required && !vern_sat,
-                    "insufficient_vernalization", "failed_to_mature"),
     forced_harvest = FALSE,
     regrowth_started = regrowth_started,
-    vernalization_satisfied = ifelse(crop_type == "winter" && vernalization_required, vern_sat, NA),
-    vernalization_days = ifelse(crop_type == "winter" && vernalization_required, vernal_days, NA)
+    vernalization_satisfied = if (crop_type == "winter" && isTRUE(vernalization_required)) vern_sat else NA,
+    vernalization_days = if (crop_type == "winter" && isTRUE(vernalization_required)) vernal_days else NA_real_
   )
 }
 
-# Run simulations for all years in prepared weather data.
+#' Run ThermoPheno simulations across all years in a weather data set
+#'
+#' @inheritParams simulate_one_year
+#' @return Data frame with one row per simulated harvest year.
+#' @export
 run_simulation <- function(weather,
                            crop_name,
                            required_tt,
@@ -417,8 +421,8 @@ run_simulation <- function(weather,
                            latest_planting_mmdd,
                            latest_harvest_mmdd,
                            t_base,
-                           t_opt = NA,
-                           t_max_cut = NA,
+                           t_opt = NA_real_,
+                           t_max_cut = NA_real_,
                            tt_mode = "simple",
                            crop_type = c("summer", "winter"),
                            min_mean_temp_plant = 0,
@@ -433,118 +437,51 @@ run_simulation <- function(weather,
                            winter_plant_temp_min = 5,
                            winter_plant_temp_max = 15) {
   crop_type <- match.arg(crop_type)
+  if (!"year" %in% names(weather) || !"tmean" %in% names(weather)) weather <- prepare_weather(weather)
   yrs <- sort(unique(weather$year))
+  if (crop_type == "winter") yrs <- yrs[yrs > min(yrs)]
 
-  if (crop_type == "summer") {
-    out <- bind_rows(lapply(yrs, function(yr) {
-      simulate_one_year(
-        weather = weather,
-        sim_year = yr,
-        required_tt = required_tt,
-        earliest_planting_mmdd = earliest_planting_mmdd,
-        latest_planting_mmdd = latest_planting_mmdd,
-        latest_harvest_mmdd = latest_harvest_mmdd,
-        t_base = t_base,
-        t_opt = t_opt,
-        t_max_cut = t_max_cut,
-        tt_mode = tt_mode,
-        crop_type = crop_type,
-        min_mean_temp_plant = min_mean_temp_plant,
-        forced_harvest_allowed = forced_harvest_allowed,
-        min_fraction_tt_for_forced_harvest = min_fraction_tt_for_forced_harvest,
-        winter_dormancy_temp = winter_dormancy_temp,
-        vernalization_required = vernalization_required,
-        vernalization_temp_min = vernalization_temp_min,
-        vernalization_temp_max = vernalization_temp_max,
-        vernalization_days_required = vernalization_days_required,
-        spring_regrowth_temp = spring_regrowth_temp,
-        winter_plant_temp_min = winter_plant_temp_min,
-        winter_plant_temp_max = winter_plant_temp_max,
-        crop_name = crop_name
-      )
-    }))
-  } else {
-    first_year <- min(yrs)
-    last_year <- max(yrs)
+  rows <- lapply(yrs, function(yr) {
+    simulate_one_year(
+      weather = weather,
+      sim_year = yr,
+      required_tt = required_tt,
+      earliest_planting_mmdd = earliest_planting_mmdd,
+      latest_planting_mmdd = latest_planting_mmdd,
+      latest_harvest_mmdd = latest_harvest_mmdd,
+      t_base = t_base,
+      t_opt = t_opt,
+      t_max_cut = t_max_cut,
+      tt_mode = tt_mode,
+      crop_type = crop_type,
+      min_mean_temp_plant = min_mean_temp_plant,
+      forced_harvest_allowed = forced_harvest_allowed,
+      min_fraction_tt_for_forced_harvest = min_fraction_tt_for_forced_harvest,
+      winter_dormancy_temp = winter_dormancy_temp,
+      vernalization_required = vernalization_required,
+      vernalization_temp_min = vernalization_temp_min,
+      vernalization_temp_max = vernalization_temp_max,
+      vernalization_days_required = vernalization_days_required,
+      spring_regrowth_temp = spring_regrowth_temp,
+      winter_plant_temp_min = winter_plant_temp_min,
+      winter_plant_temp_max = winter_plant_temp_max,
+      crop_name = crop_name
+    )
+  })
 
-    planting_rows <- bind_rows(lapply(yrs[yrs < last_year], function(yr) {
-      weather_window <- weather %>%
-        filter(date >= clamp_year_day(yr, earliest_planting_mmdd),
-               date <= clamp_year_day(yr, latest_planting_mmdd))
-
-      plant_result <- find_planting_date(
-        weather_window = weather_window,
-        earliest_planting_date = clamp_year_day(yr, earliest_planting_mmdd),
-        latest_planting_date = clamp_year_day(yr, latest_planting_mmdd),
-        crop_type = crop_type,
-        min_mean_temp_plant = min_mean_temp_plant,
-        winter_plant_temp_min = winter_plant_temp_min,
-        winter_plant_temp_max = winter_plant_temp_max
-      )
-
-      data.frame(
-        crop_name = crop_name,
-        crop_type = crop_type,
-        row_role = "planting_year",
-        year = yr,
-        planting_date = if (plant_result$found) plant_result$planting_date else as.Date(NA),
-        maturity_date = as.Date(NA),
-        harvest_date = as.Date(NA),
-        season_length_days = NA_integer_,
-        accumulated_tt = NA_real_,
-        required_tt = required_tt,
-        maturity_fraction = NA_real_,
-        status = if (plant_result$found) "planted_for_next_year" else "not_planted",
-        forced_harvest = FALSE,
-        regrowth_started = FALSE,
-        vernalization_satisfied = NA,
-        vernalization_days = NA_real_
-      )
-    }))
-
-    harvest_rows <- bind_rows(lapply(yrs[yrs > first_year], function(yr) {
-      full_res <- simulate_one_year(
-        weather = weather,
-        sim_year = yr,
-        required_tt = required_tt,
-        earliest_planting_mmdd = earliest_planting_mmdd,
-        latest_planting_mmdd = latest_planting_mmdd,
-        latest_harvest_mmdd = latest_harvest_mmdd,
-        t_base = t_base,
-        t_opt = t_opt,
-        t_max_cut = t_max_cut,
-        tt_mode = tt_mode,
-        crop_type = crop_type,
-        min_mean_temp_plant = min_mean_temp_plant,
-        forced_harvest_allowed = forced_harvest_allowed,
-        min_fraction_tt_for_forced_harvest = min_fraction_tt_for_forced_harvest,
-        winter_dormancy_temp = winter_dormancy_temp,
-        vernalization_required = vernalization_required,
-        vernalization_temp_min = vernalization_temp_min,
-        vernalization_temp_max = vernalization_temp_max,
-        vernalization_days_required = vernalization_days_required,
-        spring_regrowth_temp = spring_regrowth_temp,
-        winter_plant_temp_min = winter_plant_temp_min,
-        winter_plant_temp_max = winter_plant_temp_max,
-        crop_name = crop_name
-      )
-      full_res$planting_date <- as.Date(NA)
-      full_res$row_role <- "harvest_year"
-      full_res
-    }))
-
-    out <- bind_rows(planting_rows, harvest_rows) %>% arrange(year, row_role)
-  }
-
-  out
+  do.call(rbind, rows)
 }
 
-# Provide default parameter presets by crop type.
+#' Default ThermoPheno crop parameters
+#'
+#' @param crop_type `summer` or `winter`.
+#' @return A named list of default crop parameters.
+#' @export
 default_parameters <- function(crop_type = c("summer", "winter")) {
   crop_type <- match.arg(crop_type)
 
   if (crop_type == "summer") {
-    list(
+    return(list(
       crop_name = "Maize",
       days_to_maturity = 140,
       t_base = 8,
@@ -553,19 +490,71 @@ default_parameters <- function(crop_type = c("summer", "winter")) {
       baseline_planting_mmdd = "04-15",
       earliest_planting_mmdd = "03-15",
       latest_planting_mmdd = "05-31",
-      latest_harvest_mmdd = "10-01"
-    )
-  } else {
-    list(
-      crop_name = "Winter wheat",
-      days_to_maturity = 300,
-      t_base = 0,
-      t_opt = 18,
-      t_max_cut = 30,
-      baseline_planting_mmdd = "10-01",
-      earliest_planting_mmdd = "09-15",
-      latest_planting_mmdd = "11-15",
-      latest_harvest_mmdd = "08-01"
-    )
+      latest_harvest_mmdd = "10-01",
+      min_mean_temp_plant = 8,
+      forced_harvest_allowed = TRUE,
+      min_fraction_tt_for_forced_harvest = 0.8,
+      winter_dormancy_temp = 0,
+      vernalization_required = FALSE,
+      vernalization_days_required = 0,
+      spring_regrowth_temp = 5,
+      winter_plant_temp_min = 5,
+      winter_plant_temp_max = 15
+    ))
   }
+
+  list(
+    crop_name = "Winter wheat",
+    days_to_maturity = 300,
+    t_base = 0,
+    t_opt = 18,
+    t_max_cut = 30,
+    baseline_planting_mmdd = "10-01",
+    earliest_planting_mmdd = "09-15",
+    latest_planting_mmdd = "11-15",
+    latest_harvest_mmdd = "08-01",
+    min_mean_temp_plant = 8,
+    forced_harvest_allowed = TRUE,
+    min_fraction_tt_for_forced_harvest = 0.8,
+    winter_dormancy_temp = 0,
+    vernalization_required = TRUE,
+    vernalization_days_required = 45,
+    spring_regrowth_temp = 5,
+    winter_plant_temp_min = 5,
+    winter_plant_temp_max = 15
+  )
+}
+
+#' Compare observed and simulated phenological dates
+#'
+#' @param df Data frame containing observed and simulated date columns.
+#' @param observed_col Name of observed date column.
+#' @param simulated_col Name of simulated date column.
+#' @return One-row data frame with validation metrics.
+#' @export
+compare_validation_metrics <- function(df, observed_col = "observed_date", simulated_col = "simulated_date") {
+  if (!all(c(observed_col, simulated_col) %in% names(df))) {
+    stop("Observed and simulated columns are not present in `df`.", call. = FALSE)
+  }
+  obs <- as.Date(df[[observed_col]])
+  sim <- as.Date(df[[simulated_col]])
+  ok <- !is.na(obs) & !is.na(sim)
+  if (!any(ok)) {
+    return(data.frame(n = 0, mae = NA_real_, rmse = NA_real_, bias = NA_real_, medae = NA_real_,
+                      within_7_days_pct = NA_real_, within_14_days_pct = NA_real_, r2 = NA_real_))
+  }
+  e <- as.numeric(sim[ok] - obs[ok])
+  r2 <- if (sum(ok) >= 2 && stats::sd(as.numeric(obs[ok])) > 0 && stats::sd(as.numeric(sim[ok])) > 0) {
+    stats::cor(as.numeric(obs[ok]), as.numeric(sim[ok]))^2
+  } else NA_real_
+  data.frame(
+    n = length(e),
+    mae = mean(abs(e)),
+    rmse = sqrt(mean(e^2)),
+    bias = mean(e),
+    medae = stats::median(abs(e)),
+    within_7_days_pct = mean(abs(e) <= 7) * 100,
+    within_14_days_pct = mean(abs(e) <= 14) * 100,
+    r2 = r2
+  )
 }

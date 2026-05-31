@@ -1,6 +1,10 @@
-^\.github$
-^_pkgdown\.yml$
+^README\.Rmd$
 ^pkgdown$
 ^docs$
-^README\.Rmd$
-^vignettes/dwd-validation\.md$
+^validation/results$
+^validation/cache$
+^\.github$
+^RUN_CHECKS\.R$
+^ThermoPheno.*\.zip$
+^\.Rproj\.user$
+^.*\.Rproj$

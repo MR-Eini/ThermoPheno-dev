@@ -1,137 +1,106 @@
-﻿# ThermoPheno <img src="man/figures/logo.png" align="right" height="110" alt="ThermoPheno logo" />
+# ThermoPheno
 
-ThermoPheno is an R package and Shiny application for simulating crop phenology using thermal-time (GDD) rules under historical and climate-scenario temperature series.
+**Thermal-time-based crop phenology model for historical analysis, climate-change impact assessment, and real-data validation.**
 
-Website: <https://mr-eini.github.io/ThermoPheno-dev/>
-
-## What ThermoPheno does
-
-- Simulates **planting, maturity, and harvest timing** from daily `tmin` / `tmax`.
-- Supports **summer and winter crop workflows** (including optional vernalization logic).
-- Estimates **required thermal time** from a user baseline period.
-- Compares historical and projected climate runs in one interface.
-
-## Package structure
-
-```text
-ThermoPheno-dev/
-|-- R/                        # Core package functions
-|   |-- ThermoPheno_functions.R
-|   |-- dwd_validation.R      # Input validation module
-|   |-- app_launcher.R
-|   `-- zzz.R
-|-- inst/
-|   |-- app/                  # Shiny application
-|   |   `-- app.R
-|   `-- extdata/              # Example data
-|-- tests/testthat/           # Unit tests
-|-- man/                      # Rd docs
-|-- .github/workflows/        # CI and docs pipelines
-`-- _pkgdown.yml              # pkgdown site config
-```
+ThermoPheno simulates crop planting, maturity, and harvest timing using daily minimum and maximum temperature data. It supports simple, capped, and triangular thermal-time formulations, summer and winter crop logic, dynamic planting windows, forced harvest rules, and scenario comparison.
 
 ## Installation
 
 ```r
 if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-remotes::install_github("MR-Eini/ThermoPheno-dev")
+remotes::install_github("MR-Eini/ThermoPheno")
 ```
 
-## Run the app
+## Launch the Shiny app
 
 ```r
 library(ThermoPheno)
+run_thermopheno_app()
+```
+
+The shorter alias also works:
+
+```r
 ThermoPheno()
 ```
 
-Or from the repository:
+## Example data
+
+Example files are bundled in `inst/extdata`:
 
 ```r
-shiny::runApp("inst/app/app.R")
+system.file("extdata", "Germany_historical_1981_2010_dummy_data.csv", package = "ThermoPheno")
+system.file("extdata", "Germany_10_scenarios_2071_2100_dummy_data.csv", package = "ThermoPheno")
 ```
 
-## Input data requirements
-
-At minimum, CSV files must include:
-
-| column | type | example |
-|---|---|---|
-| `date` | Date (`YYYY-MM-DD`) | `1991-04-15` |
-| `tmin` | numeric C | `4.2` |
-| `tmax` | numeric C | `13.7` |
-
-Optional grouping columns in climate files: `scenario`, `model`, `period`, `station`.
-
-## Development quick start
+## Minimal model example
 
 ```r
-install.packages(c("devtools", "testthat", "pkgdown"))
-devtools::load_all()
-devtools::test()
+library(ThermoPheno)
+
+weather_file <- system.file(
+  "extdata", "Germany_historical_1981_2010_dummy_data.csv",
+  package = "ThermoPheno"
+)
+weather <- prepare_weather(read.csv(weather_file))
+
+req <- estimate_required_tt(
+  weather = weather,
+  baseline_years = 1981:2010,
+  planting_mmdd = "04-15",
+  days_to_maturity = 140,
+  t_base = 8,
+  t_opt = 25,
+  t_max_cut = 35,
+  tt_mode = "triangular",
+  crop_type = "summer"
+)
+
+sim <- run_simulation(
+  weather = weather,
+  crop_name = "Maize",
+  required_tt = req$required_tt,
+  earliest_planting_mmdd = "03-15",
+  latest_planting_mmdd = "05-31",
+  latest_harvest_mmdd = "10-01",
+  t_base = 8,
+  t_opt = 25,
+  t_max_cut = 35,
+  tt_mode = "triangular",
+  crop_type = "summer",
+  min_mean_temp_plant = 8
+)
+
+head(sim)
 ```
 
-## Website deployment
+## Real-data validation
 
-The pkgdown website is configured in `_pkgdown.yml` and is published to:
-
-<https://mr-eini.github.io/ThermoPheno-dev/>
-
-Deployment runs through `.github/workflows/pkgdown.yaml` on pushes to `main` or `master`, and can also be started manually with `workflow_dispatch`. The workflow builds the site with `pkgdown::build_site_github_pages()` and deploys the generated `docs/` directory to the `gh-pages` branch.
-
-To preview the site locally:
+A DWD validation workflow is included in `validation/`. It downloads crop phenology observations and daily climate records, pairs phenology stations with nearest DWD climate stations, runs ThermoPheno, and exports validation metrics and figures.
 
 ```r
-pkgdown::build_site()
+source("validation/dwd_validate_thermopheno.R")
 ```
 
-## Notes
+Results are written to:
 
-- The scientific model logic is thermal-time based and intentionally simple.
-- Validation checks are included to catch malformed weather input before simulation.
-- Example datasets are in `inst/extdata`.
+```text
+validation/results/
+```
+
+## Local checks
+
+```r
+source("RUN_CHECKS.R")
+```
+
+## Main assumptions
+
+- Crop development is driven by air temperature only.
+- Daily mean temperature is calculated as `(tmin + tmax) / 2`.
+- The current winter-crop logic includes simple vernalization and dormancy rules.
+- Photoperiod, radiation, water stress, cultivar differences, and management behaviour are not explicitly modelled.
 
 ## License
 
-MIT (see `LICENSE`).
-
-## DWD Open Data integration (rdwd)
-
-ThermoPheno includes helper functions for pulling DWD data via `rdwd` with a **user-managed cache directory**.
-
-```r
-# install.packages("rdwd")
-cache_dir <- "~/thermopheno_dwd_cache"   # outside repository
-
-# Daily station temperature (DWD climate daily 'kl')
-temp <- ThermoPheno:::get_dwd_daily_temperature(
-  station_id = "00386",
-  start_year = 2018,
-  end_year = 2020,
-  cache_dir = cache_dir,
-  period = "historical"
-)
-
-# Crop phenology observations (DWD phenology open data)
-pheno <- ThermoPheno:::get_dwd_crop_phenology(
-  crop_pattern = "hafer|oat",
-  start_year = 2018,
-  end_year = 2020,
-  cache_dir = cache_dir,
-  reporter_type = "annual_reporters",
-  period = "historical"
-)
-```
-
-### Validation output table
-
-Use `build_dwd_validation_table()` after joining observed and simulated records by keys such as year/station/phase. The output contains:
-
-- `observed_date`
-- `simulated_date`
-- `error_days` (= simulated - observed)
-- summary metrics: `MAE_days`, `RMSE_days`, `bias_days`, and `R2` (when enough variation exists)
-
-### Important
-
-- Keep DWD cache outside this repository.
-- Never commit downloaded DWD data to GitHub.
+MIT.
