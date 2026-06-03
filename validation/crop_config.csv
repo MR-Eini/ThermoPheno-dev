@@ -1,0 +1,4 @@
+crop_name,crop_type,file_pattern,dwd_object_regex,planting_phase_regex,harvest_phase_regex,days_to_maturity,t_base,t_opt,t_max_cut,tt_mode,baseline_planting_mmdd,earliest_planting_mmdd,latest_planting_mmdd,latest_harvest_mmdd,min_mean_temp_plant,winter_plant_temp_min,winter_plant_temp_max,vernalization_required,vernalization_days_required,winter_dormancy_temp,spring_regrowth_temp,forced_harvest_allowed,min_fraction_tt_for_forced_harvest
+Maize,summer,Mais,Mais,Bestellung Beginn,Ernte,140,8,25,35,triangular,05-10,04-20,06-30,11-15,12,5,15,FALSE,0,0,5,TRUE,0.8
+Sugar beet,summer,Zucker|Ruebe|Rübe|Rube,Zucker|Ruebe|Rübe|Rube,Bestellung Beginn,Ernte,180,3,22,35,triangular,04-10,03-25,05-31,11-30,8,5,15,FALSE,0,0,5,TRUE,0.8
+Winter wheat,winter,Winterweizen,Winterweizen,Bestellung Beginn,Ernte,300,0,18,30,triangular,10-10,10-01,12-05,08-15,0,4,16,TRUE,45,0,5,TRUE,0.8
